@@ -189,6 +189,8 @@ cdp-cli orient --target example.com
 
 `current.data.current.refs.candidates` lists a small ranked set of refs from `visible-controls.ndjson` with scores and reasons such as `fillable`, `action text`, `input hint`, or `below fold`. The underlying files remain the source of truth; the ranking is just a quick starting point for the next grep/click/fill step.
 
+`current.data.current.diffs` points at the latest snapshot diff directory when one exists, with patch file counts, additions/removals, hunk totals, and a suggested `rg` for newly appeared dialogs, controls, ARIA markers, and modal/cookie/consent text. This is the first place to look when a click or fill unexpectedly changes the page.
+
 Refs such as `n000017` are reusable by action commands until the next snapshot changes them:
 
 ```sh

@@ -13,6 +13,7 @@ export interface CurrentSnapshotSummary {
     files: CurrentFileSummary[];
     counts: Record<string, number>;
     refs: CurrentRefSummary;
+    diffs: CurrentDiffSummary | null;
   };
   suggestedSearches: string[];
   nextCommands: string[];
@@ -31,6 +32,24 @@ export interface CurrentRefSummary {
   firstFillable?: CurrentRef;
   firstDialog?: CurrentRef;
   candidates: CurrentRefCandidate[];
+}
+
+export interface CurrentDiffSummary {
+  dir: string;
+  files: CurrentDiffFileSummary[];
+  totals: {
+    files: number;
+    additions: number;
+    removals: number;
+    hunks: number;
+  };
+  suggestedSearch: string;
+}
+
+export interface CurrentDiffFileSummary extends CurrentFileSummary {
+  additions: number;
+  removals: number;
+  hunks: number;
 }
 
 export interface CurrentRef {
@@ -107,7 +126,8 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
         artifacts: {},
         files: [],
         counts: {},
-        refs: { candidates: [] }
+        refs: { candidates: [] },
+        diffs: null
       },
       suggestedSearches: [],
       nextCommands: [
@@ -122,6 +142,7 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
   const files = await Promise.all(IMPORTANT_FILES.map((file) => summarizeFile(currentDir, file)));
   const counts = await countIndexes(currentDir);
   const refs = await summarizeRefs(currentDir);
+  const diffs = await summarizeLatestDiffs(currentDir);
   const grepFiles = [
     artifacts["dump.txt"],
     artifacts["visible-controls.ndjson"],
@@ -137,7 +158,8 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
       artifacts,
       files,
       counts,
-      refs
+      refs,
+      diffs
     },
     suggestedSearches: [
       `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' ${shellBrace(grepFiles)}`,
@@ -148,7 +170,8 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
       `rg 'role="dialog"|aria-modal|popover|modal|cookie|consent' ${shellBrace([
         artifacts["dump.txt"],
         artifacts["dialogs.ndjson"]
-      ])}`
+      ])}`,
+      ...(diffs ? [diffs.suggestedSearch] : [])
     ],
     nextCommands: nextCommands(target, refs)
   };
@@ -209,6 +232,54 @@ async function summarizeRefs(currentDir: string): Promise<CurrentRefSummary> {
     }
   }
   return summary;
+}
+
+async function summarizeLatestDiffs(currentDir: string): Promise<CurrentDiffSummary | null> {
+  const baseDir = path.dirname(currentDir);
+  const latest = await readJsonFile<{ artifacts?: ArtifactMap }>(path.join(baseDir, "latest.json"));
+  const diffDir = latest?.artifacts?.diffDir;
+  if (!diffDir || !(await fs.pathExists(diffDir))) return null;
+
+  const entries = (await fs.readdir(diffDir))
+    .filter((entry) => entry.endsWith(".patch"))
+    .sort();
+  const files = await Promise.all(entries.map((entry) => summarizeDiffFile(diffDir, entry)));
+  const present = files.filter((file) => file.exists);
+  if (present.length === 0) return null;
+
+  const totals = present.reduce(
+    (acc, file) => ({
+      files: acc.files + 1,
+      additions: acc.additions + file.additions,
+      removals: acc.removals + file.removals,
+      hunks: acc.hunks + file.hunks
+    }),
+    { files: 0, additions: 0, removals: 0, hunks: 0 }
+  );
+
+  return {
+    dir: diffDir,
+    files: present,
+    totals,
+    suggestedSearch: `rg '^\\+.*(dialog|modal|popover|cookie|consent|button|input|textarea|select|aria-|role=|ref=)|^@@' ${shellQuote(diffDir)}`
+  };
+}
+
+async function summarizeDiffFile(diffDir: string, file: string): Promise<CurrentDiffFileSummary> {
+  const summary = await summarizeFile(diffDir, file);
+  if (!summary.exists) {
+    return { ...summary, additions: 0, removals: 0, hunks: 0 };
+  }
+  const text = await fs.readFile(summary.path, "utf8");
+  let additions = 0;
+  let removals = 0;
+  let hunks = 0;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("@@")) hunks += 1;
+    else if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    else if (line.startsWith("-") && !line.startsWith("---")) removals += 1;
+  }
+  return { ...summary, additions, removals, hunks };
 }
 
 function nextCommands(target: TargetInfo, refs: CurrentRefSummary): string[] {

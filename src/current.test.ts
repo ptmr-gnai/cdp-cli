@@ -21,7 +21,8 @@ describe("readCurrentSnapshotSummary", () => {
         dir: null,
         artifacts: {},
         files: [],
-        counts: {}
+        counts: {},
+        diffs: null
       },
       nextCommands: [
         'cdp-cli snapshot --target "TARGET123"',
@@ -57,6 +58,23 @@ describe("readCurrentSnapshotSummary", () => {
     await fs.writeFile(path.join(current, "dialogs.ndjson"), "");
     await fs.writeFile(path.join(current, "resources.ndjson"), `${JSON.stringify({ name: "https://example.com/app.js" })}\n`);
     await fs.writeFile(path.join(current, "scripts.ndjson"), `${JSON.stringify({ src: "https://example.com/app.js" })}\n`);
+    const diffDir = path.join(outDir, "targets", "example.com-TARGET123", "diffs", "snap1");
+    await fs.ensureDir(diffDir);
+    await fs.writeFile(
+      path.join(diffDir, "dump.patch"),
+      [
+        "--- dump.txt\tprevious",
+        "+++ dump.txt\tcurrent",
+        "@@ -1 +1,2 @@",
+        " [n000001] <button> text=\"Search\"",
+        "+[n000099] <div> role=\"dialog\" text=\"Cookie consent\"",
+        "-[n000050] <button> text=\"Old\"",
+        ""
+      ].join("\n")
+    );
+    await fs.writeJson(path.join(outDir, "targets", "example.com-TARGET123", "latest.json"), {
+      artifacts: { diffDir }
+    });
 
     const summary = await readCurrentSnapshotSummary(outDir, target);
 
@@ -75,6 +93,18 @@ describe("readCurrentSnapshotSummary", () => {
       firstVisibleControl: { ref: "n000017", tag: "button", text: "Search" },
       firstFillable: { ref: "n000042", tag: "input", text: "Email address" }
     });
+    expect(summary.current.diffs).toMatchObject({
+      dir: diffDir,
+      totals: { files: 1, additions: 1, removals: 1, hunks: 1 },
+      files: [
+        expect.objectContaining({
+          name: "dump.patch",
+          additions: 1,
+          removals: 1,
+          hunks: 1
+        })
+      ]
+    });
     expect(summary.current.refs.candidates[0]).toMatchObject({
       ref: "n000042",
       reasons: expect.arrayContaining(["input hint", "fillable"])
@@ -91,6 +121,7 @@ describe("readCurrentSnapshotSummary", () => {
       lines: 3
     }));
     expect(summary.suggestedSearches.join("\n")).toContain("rg");
+    expect(summary.suggestedSearches.join("\n")).toContain(diffDir);
     expect(summary.nextCommands).toContain('cdp-cli click n000017 --target "TARGET123"');
     expect(summary.nextCommands).toContain('cdp-cli fill n000042 \'text\' --target "TARGET123"');
   });
