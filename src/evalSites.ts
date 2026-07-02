@@ -27,7 +27,7 @@ export interface EvalSiteRunOptions {
 
 export const DEFAULT_EVAL_SITES: EvalSite[] = [
   { id: "wikipedia", url: "https://en.wikipedia.org/wiki/World_Wide_Web" },
-  { id: "github", url: "https://github.com/ptmr-gnai/cdp-cli" },
+  { id: "github", url: "https://github.com/github/docs" },
   { id: "x-bookmarks", url: "https://x.com/i/bookmarks" },
   { id: "cnn", url: "https://www.cnn.com" },
   { id: "openai-docs", url: "https://developers.openai.com/codex/app" },

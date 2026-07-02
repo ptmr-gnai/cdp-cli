@@ -20,6 +20,7 @@ import { parseEvalSites, runReadOnlyEvalSites } from "./evalSites.js";
 import { errorEnvelope, printEnvelope, targetActions } from "./output.js";
 import { resolveSelectorRef } from "./refs.js";
 import { configureTrace } from "./trace.js";
+import { helpersForCurrent, readCurrentSnapshotSummary } from "./current.js";
 import type { CliGlobalOptions, JsonEnvelope } from "./types.js";
 
 const program = new Command();
@@ -177,6 +178,28 @@ program
       } finally {
         await closeClient(client);
       }
+    });
+  });
+
+program
+  .command("current")
+  .alias("orient")
+  .description("Read the latest filesystem projection for the selected page target.")
+  .action(async () => {
+    await runCommand("current", async (options) => {
+      const target = await selectTarget(options.browserUrl, options.target, options.userDataDir);
+      const summary = await readCurrentSnapshotSummary(options.outDir, target);
+      return {
+        ok: Boolean(summary.current.dir),
+        command: "current",
+        message: summary.current.dir
+          ? "Latest snapshot filesystem projection is ready."
+          : "No current snapshot files found for this target. Run cdp-cli snapshot first.",
+        data: summary,
+        artifacts: summary.current.artifacts,
+        helpers: helpersForCurrent(summary),
+        actions: targetActions(target)
+      };
     });
   });
 

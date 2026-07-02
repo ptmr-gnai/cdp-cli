@@ -59,7 +59,7 @@ function normalizeRef(input: string): string | undefined {
   return input.match(REF_PATTERN)?.[1].toLowerCase();
 }
 
-async function findCurrentSnapshotDir(outDir: string, target: TargetInfo): Promise<string | undefined> {
+export async function findCurrentSnapshotDir(outDir: string, target: TargetInfo): Promise<string | undefined> {
   const direct = path.join(targetDir(outDir, target), "current");
   if (await fs.pathExists(direct)) return direct;
 
@@ -161,7 +161,7 @@ function parseDumpSelector(line: string): string | undefined {
   }
 }
 
-async function* readNdjson<T>(file: string): AsyncGenerator<T> {
+export async function* readNdjson<T>(file: string): AsyncGenerator<T> {
   if (!(await fs.pathExists(file))) return;
   const text = await fs.readFile(file, "utf8");
   for (const line of text.split("\n")) {

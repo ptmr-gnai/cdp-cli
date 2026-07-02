@@ -58,6 +58,7 @@ cdp-cli status
 cdp-cli list
 cdp-cli open https://example.com
 cdp-cli snapshot
+cdp-cli current
 cdp-cli eval 'document.title'
 ```
 
@@ -72,6 +73,8 @@ cdp-cli open https://example.com
 cdp-cli navigate https://example.org
 cdp-cli close --target example.com
 cdp-cli snapshot [label]
+cdp-cli current
+cdp-cli orient
 cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
 cdp-cli click 'a[href]'
@@ -160,6 +163,13 @@ The important files for agents are usually:
 
 `dump.txt` and the structured indexes redact sensitive hidden/password-like input values and omit script/template bodies. `dom.html` is intentionally raw and should be treated as a fallback artifact.
 
+`current` is the agent orientation command. It reads the latest snapshot files from disk and reports the current directory, artifact paths, line counts, index counts, helper matches, suggested `rg` commands, and likely next commands:
+
+```sh
+cdp-cli current --target example.com
+cdp-cli orient --target example.com
+```
+
 Refs such as `n000017` are reusable by action commands until the next snapshot changes them:
 
 ```sh
@@ -175,7 +185,7 @@ The built-in eval suite opens pages, snapshots them, records artifact sizes, and
 ```sh
 cdp-cli --no-screenshot evals readonly-sites
 cdp-cli --no-screenshot evals readonly-sites \
-  --site github=https://github.com/ptmr-gnai/cdp-cli \
+  --site github=https://github.com/github/docs \
   --site webcomponents=https://mdn.github.io/web-components-examples/popup-info-box-web-component/
 ```
 
