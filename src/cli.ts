@@ -13,7 +13,7 @@ import {
   waitForLoad
 } from "./cdp.js";
 import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, defaultChromeUserDataDir, resolveOutDir } from "./env.js";
-import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, sleep, typeExpression } from "./actions.js";
+import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, sleep, typeExpression, waitForDomSettle } from "./actions.js";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
 import { parseEvalSites, runReadOnlyEvalSites, summarizeEvalSiteResults } from "./evalSites.js";
@@ -363,8 +363,9 @@ program
   .command("click")
   .description("Click a DOM selector or latest snapshot ref, recording before/after snapshots and diffs.")
   .argument("<selector-or-ref>", "CSS selector or ref like n000017")
-  .option("--wait <ms>", "post-click settle timeout", parseIntOption, 1000)
-  .action(async (selectorOrRef: string, commandOptions: { wait: number }) => {
+  .option("--wait <ms>", "post-click load/DOM settle timeout", parseIntOption, 1000)
+  .option("--quiet <ms>", "DOM quiet window before after-snapshot", parseIntOption, 150)
+  .action(async (selectorOrRef: string, commandOptions: { wait: number; quiet: number }) => {
     await runCommand("click", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
@@ -373,12 +374,15 @@ program
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "click",
           clickExpression(resolved),
-          () => waitForLoad(client, commandOptions.wait)
+          async () => {
+            await waitForLoad(client, commandOptions.wait);
+            return waitForDomSettle(client, commandOptions.wait, commandOptions.quiet);
+          }
         );
         return {
           ok: !action.exception,
           command: "click",
-          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
+          data: { target, locator: resolved, result: action.result, settle: action.settle ?? null, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)
@@ -395,7 +399,9 @@ program
   .argument("<selector-or-ref>", "CSS selector or ref like n000017")
   .argument("<text>", "text to enter")
   .option("--append", "append instead of replacing")
-  .action(async (selectorOrRef: string, text: string, commandOptions: { append?: boolean }) => {
+  .option("--settle <ms>", "post-type DOM settle timeout", parseIntOption, 1000)
+  .option("--quiet <ms>", "DOM quiet window before after-snapshot", parseIntOption, 150)
+  .action(async (selectorOrRef: string, text: string, commandOptions: { append?: boolean; settle: number; quiet: number }) => {
     await runCommand("type", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
@@ -403,12 +409,13 @@ program
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "type",
-          typeExpression(resolved, text, Boolean(commandOptions.append))
+          typeExpression(resolved, text, Boolean(commandOptions.append)),
+          () => waitForDomSettle(client, commandOptions.settle, commandOptions.quiet)
         );
         return {
           ok: !action.exception,
           command: "type",
-          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
+          data: { target, locator: resolved, result: action.result, settle: action.settle ?? null, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)
@@ -424,7 +431,9 @@ program
   .description("Replace text in a selector or latest snapshot ref.")
   .argument("<selector-or-ref>", "CSS selector or ref like n000017")
   .argument("<text>", "text to enter")
-  .action(async (selectorOrRef: string, text: string) => {
+  .option("--settle <ms>", "post-fill DOM settle timeout", parseIntOption, 1000)
+  .option("--quiet <ms>", "DOM quiet window before after-snapshot", parseIntOption, 150)
+  .action(async (selectorOrRef: string, text: string, commandOptions: { settle: number; quiet: number }) => {
     await runCommand("fill", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
@@ -432,12 +441,13 @@ program
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "fill",
-          typeExpression(resolved, text, false)
+          typeExpression(resolved, text, false),
+          () => waitForDomSettle(client, commandOptions.settle, commandOptions.quiet)
         );
         return {
           ok: !action.exception,
           command: "fill",
-          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
+          data: { target, locator: resolved, result: action.result, settle: action.settle ?? null, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)
@@ -452,7 +462,9 @@ program
   .command("press")
   .description("Send a keyboard key, recording before/after snapshots and diffs.")
   .argument("<key>", "CDP key value, for example Enter, Escape, Tab")
-  .action(async (key: string) => {
+  .option("--settle <ms>", "post-key DOM settle timeout", parseIntOption, 1000)
+  .option("--quiet <ms>", "DOM quiet window before after-snapshot", parseIntOption, 150)
+  .action(async (key: string, commandOptions: { settle: number; quiet: number }) => {
     await runCommand("press", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
@@ -463,6 +475,7 @@ program
           screenshot: options.screenshot
         });
         await pressKey(client, key);
+        const settle = await waitForDomSettle(client, commandOptions.settle, commandOptions.quiet);
         const after = await writeSnapshot(client, {
           outDir: options.outDir,
           target,
@@ -472,7 +485,7 @@ program
         return {
           ok: true,
           command: "press",
-          data: { target, key },
+          data: { target, key, settle },
           artifacts: { before: before.dir, after: after.dir, ...after.artifacts },
           helpers: helpersForUrl(after.meta.url),
           actions: targetActions(target)

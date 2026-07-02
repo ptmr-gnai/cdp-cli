@@ -88,8 +88,8 @@ cdp-cli click 'a[href]'
 cdp-cli click n000017
 cdp-cli click n000017 --wait 3000
 cdp-cli type 'input[name="q"]' 'search text'
-cdp-cli fill n000017 'search text'
-cdp-cli press Enter
+cdp-cli fill n000017 'search text' --settle 1500
+cdp-cli press Enter --settle 1500
 cdp-cli helpers list
 cdp-cli helpers run generic links
 cdp-cli evals readonly-sites
@@ -193,6 +193,8 @@ cdp-cli click n000017
 cdp-cli wait 1000
 cdp-cli fill n000042 'agent query'
 ```
+
+`click`, `type`, `fill`, and `press` wait for a DOM quiet window before writing the after snapshot, and include `data.settle` with mutation count, reason, and elapsed time. Use `--settle` / `--quiet` to tune this when a site updates slowly.
 
 Use `wait` / `settle` after client-side transitions, fetches, timers, or popups. It records a no-op before/after run and writes diffs, making SPA changes visible in the filesystem without reaching for screenshots or raw JS first.
 

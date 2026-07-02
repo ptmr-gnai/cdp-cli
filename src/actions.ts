@@ -18,6 +18,7 @@ export interface ActionContext {
 export interface ActionResult {
   result: unknown;
   exception?: string;
+  settle?: unknown;
   before: SnapshotResult;
   after: SnapshotResult;
   artifacts: ArtifactMap;
@@ -27,7 +28,7 @@ export async function runRecordedEvaluation(
   context: ActionContext,
   label: string,
   expression: string,
-  afterEvaluate?: () => Promise<void>
+  afterEvaluate?: () => Promise<unknown>
 ): Promise<ActionResult> {
   const before = await writeSnapshot(context.client, {
     outDir: context.outDir,
@@ -44,7 +45,7 @@ export async function runRecordedEvaluation(
 
   const evalResult = await evaluateExpression(context.client, expression);
   await fs.writeJson(resultPath, evalResult, { spaces: 2 });
-  if (afterEvaluate) await afterEvaluate();
+  const settle = afterEvaluate ? await afterEvaluate() : undefined;
 
   const after = await writeSnapshot(context.client, {
     outDir: context.outDir,
@@ -56,6 +57,7 @@ export async function runRecordedEvaluation(
   return {
     result: evalResult.value,
     exception: evalResult.exception,
+    settle,
     before,
     after,
     artifacts: {
@@ -71,6 +73,62 @@ export async function runRecordedEvaluation(
 
 export async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForDomSettle(client: CdpClient, timeoutMs: number, quietMs = 150): Promise<unknown> {
+  const result = await evaluateExpression(client, domSettleExpression(timeoutMs, quietMs));
+  if (result.exception) return { reason: "error", exception: result.exception, timeoutMs, quietMs, minWaitMs: minDomSettleWait(timeoutMs) };
+  return result.value;
+}
+
+export function domSettleExpression(timeoutMs: number, quietMs = 150): string {
+  return `(() => new Promise((resolve) => {
+    const timeoutMs = ${JSON.stringify(timeoutMs)};
+    const quietMs = ${JSON.stringify(quietMs)};
+    const minWaitMs = ${JSON.stringify(minDomSettleWait(timeoutMs))};
+    const startedAt = Date.now();
+    let mutations = 0;
+    let quietTimer;
+    let timeoutTimer;
+    const finish = (reason) => {
+      clearTimeout(quietTimer);
+      clearTimeout(timeoutTimer);
+      observer.disconnect();
+      resolve({
+        reason,
+        timeoutMs,
+        quietMs,
+        minWaitMs,
+        mutations,
+        elapsedMs: Date.now() - startedAt,
+        href: location.href,
+        title: document.title,
+        readyState: document.readyState
+      });
+    };
+    const armQuiet = () => {
+      clearTimeout(quietTimer);
+      const elapsed = Date.now() - startedAt;
+      const waitMs = Math.max(quietMs, minWaitMs - elapsed);
+      quietTimer = setTimeout(() => finish('quiet'), waitMs);
+    };
+    const observer = new MutationObserver((records) => {
+      mutations += records.length;
+      armQuiet();
+    });
+    observer.observe(document.documentElement || document, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true
+    });
+    timeoutTimer = setTimeout(() => finish('timeout'), timeoutMs);
+    armQuiet();
+  }))()`;
+}
+
+function minDomSettleWait(timeoutMs: number): number {
+  return Math.max(0, Math.min(500, timeoutMs));
 }
 
 type LocatorInput = string | Pick<ResolvedRef, "selector" | "roots" | "ref">;
