@@ -78,6 +78,8 @@ cdp-cli snapshot-all [label]
 cdp-cli dump-all [label]
 cdp-cli current
 cdp-cli orient
+cdp-cli current-all
+cdp-cli orient-all
 cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
 cdp-cli wait 1000
@@ -169,6 +171,8 @@ The important files for agents are usually:
 `dump.txt` and the structured indexes redact sensitive hidden/password-like input values and omit script/template bodies. `dom.html` is intentionally raw and should be treated as a fallback artifact.
 
 Use `snapshot-all` / `dump-all` after actions that may open a popup, OAuth flow, new tab, or secondary window. It snapshots every open page target into `.cdp-cli/targets/*/current` so agents can inspect the whole browser state with `rg` and normal filesystem tools.
+
+Use `current-all` / `orient-all` after `snapshot-all` to summarize every open target's current files, ranked refs, helper matches, and cross-target `rg` commands.
 
 `current` is the agent orientation command. It reads the latest snapshot files from disk and reports the current directory, artifact paths, line counts, index counts, helper matches, suggested `rg` commands, and likely next commands:
 

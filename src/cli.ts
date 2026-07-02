@@ -262,6 +262,46 @@ program
   });
 
 program
+  .command("current-all")
+  .alias("orient-all")
+  .description("Read latest filesystem projections for every open page target.")
+  .action(async () => {
+    await runCommand("current-all", async (options) => {
+      const targets = await listTargets(options.browserUrl, options.userDataDir);
+      const results = await Promise.all(
+        targets.map((target) => readCurrentSnapshotSummary(options.outDir, target))
+      );
+      const missing = results.filter((result) => !result.current.dir);
+      return {
+        ok: missing.length === 0,
+        command: "current-all",
+        message: missing.length === 0
+          ? "Latest filesystem projections are ready for all open page targets."
+          : "Some open targets do not have current snapshot files. Run cdp-cli snapshot-all first.",
+        data: {
+          targets,
+          results,
+          summary: {
+            ok: results.filter((result) => result.current.dir).length,
+            missing: missing.length,
+            targets: targets.length
+          },
+          suggestedSearches: [
+            `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' ${options.outDir}/targets/*/current/{dump.txt,visible-controls.ndjson,forms.ndjson,dialogs.ndjson}`,
+            `rg 'Popup|Authorize|OAuth|Sign in|Continue|Allow|Deny' ${options.outDir}/targets/*/current/{dump.txt,text.md,visible-controls.ndjson,dialogs.ndjson}`,
+            `rg '"ref":"n[0-9]+".*"visible":true|"tag":"(button|input|textarea|select|a)"' ${options.outDir}/targets/*/current/{visible-controls.ndjson,controls.ndjson}`
+          ]
+        },
+        actions: [
+          { rel: "snapshot-all", command: "cdp-cli snapshot-all", description: "Refresh every open page target projection." },
+          { rel: "list", command: "cdp-cli list", description: "List open page targets." },
+          { rel: "current", command: "cdp-cli current --target <target>", description: "Inspect one target in detail." }
+        ]
+      };
+    });
+  });
+
+program
   .command("eval")
   .description("Evaluate JavaScript in the page, recording before/after snapshots and diffs.")
   .argument("[script]", "JavaScript expression or program")

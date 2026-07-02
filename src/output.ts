@@ -36,6 +36,11 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
       description: "Show the latest snapshot files, counts, grep commands, and next actions."
     },
     {
+      rel: "current-all",
+      command: "cdp-cli current-all",
+      description: "Show latest snapshot summaries across every open page target."
+    },
+    {
       rel: "navigate",
       command: `cdp-cli navigate https://example.com${suffix}`,
       description: "Navigate this page target and capture a snapshot."
