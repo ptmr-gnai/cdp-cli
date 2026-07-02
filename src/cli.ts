@@ -1,11 +1,21 @@
 #!/usr/bin/env node
 import fs from "fs-extra";
 import { Command } from "commander";
-import { closeClient, connectTarget, createTarget, getBrowserStatus, listTargets, waitForLoad } from "./cdp.js";
+import {
+  closeClient,
+  closeTarget,
+  connectTarget,
+  createTarget,
+  getBrowserStatus,
+  listTargets,
+  selectTarget,
+  waitForLoad
+} from "./cdp.js";
 import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, defaultChromeUserDataDir, resolveOutDir } from "./env.js";
 import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, typeExpression } from "./actions.js";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
+import { parseEvalSites, runReadOnlyEvalSites } from "./evalSites.js";
 import { errorEnvelope, printEnvelope, targetActions } from "./output.js";
 import { configureTrace } from "./trace.js";
 import type { CliGlobalOptions, JsonEnvelope } from "./types.js";
@@ -90,6 +100,22 @@ program
       } finally {
         await closeClient(client);
       }
+    });
+  });
+
+program
+  .command("close")
+  .description("Close a page target.")
+  .argument("[target]", "target id, title substring, or URL substring")
+  .action(async (targetSelector: string | undefined) => {
+    await runCommand("close", async (options) => {
+      const target = await selectTarget(options.browserUrl, targetSelector ?? options.target, options.userDataDir);
+      const closed = await closeTarget(options.browserUrl, target.id, options.userDataDir);
+      return {
+        ok: closed,
+        command: "close",
+        data: { target, closed }
+      };
     });
   });
 
@@ -375,6 +401,32 @@ helpers
     });
   });
 
+const evals = program.command("evals").description("Run read-only browser dump evaluation suites.");
+
+evals
+  .command("readonly-sites")
+  .description("Open diverse sites and snapshot full filesystem dumps without page mutations.")
+  .option("--site <id=url>", "site to include; repeatable. Defaults to built-in diverse set.", collect, [])
+  .option("--keep-open", "leave eval-created Chrome tabs open after snapshots")
+  .action(async (commandOptions: { site: string[]; keepOpen?: boolean }) => {
+    await runCommand("evals readonly-sites", async (options) => {
+      const sites = parseEvalSites(commandOptions.site);
+      const results = await runReadOnlyEvalSites(options, sites, { closeTargets: !commandOptions.keepOpen });
+      return {
+        ok: results.every((result) => result.ok),
+        command: "evals readonly-sites",
+        data: {
+          sites,
+          results,
+          summary: {
+            ok: results.filter((result) => result.ok).length,
+            failed: results.filter((result) => !result.ok).length
+          }
+        }
+      };
+    });
+  });
+
 async function runCommand(
   command: string,
   fn: (options: CliGlobalOptions) => Promise<JsonEnvelope>
@@ -437,6 +489,11 @@ function parseIntOption(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) throw new Error(`Expected integer, got ${value}`);
   return parsed;
+}
+
+function collect(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
 }
 
 await program.parseAsync(process.argv);

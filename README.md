@@ -69,6 +69,7 @@ Every command prints JSON with filesystem paths and suggested next actions.
 cdp-cli status
 cdp-cli list
 cdp-cli open https://example.com
+cdp-cli close --target example.com
 cdp-cli snapshot [label]
 cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
@@ -77,6 +78,7 @@ cdp-cli type 'input[name="q"]' 'search text'
 cdp-cli press Enter
 cdp-cli helpers list
 cdp-cli helpers run generic links
+cdp-cli evals readonly-sites
 ```
 
 For live-profile Chrome, prefer the persistent daemon:
@@ -113,9 +115,17 @@ Artifacts are written under `.cdp-cli/` by default:
       current/
         meta.json
         state.json
+        dump.txt
         text.md
         dom.html
+        links.ndjson
+        controls.ndjson
+        visible-controls.ndjson
+        forms.ndjson
+        dialogs.ndjson
+        frames.ndjson
         accessibility.json
+        dom-snapshot.json
         helpers.json
         screenshot.png
       snapshots/
@@ -134,10 +144,28 @@ Artifacts are written under `.cdp-cli/` by default:
 The important files for agents are usually:
 
 - `state.json`: URL, title, viewport, headings, controls, dialogs, active element, and metadata.
+- `dump.txt`: grep-first tree of the page, including selectors, visibility, rects, text nodes, same-origin frames, and open shadow roots.
 - `text.md`: readable page text.
+- `visible-controls.ndjson`: visible links/buttons/inputs/selectors to try first.
+- `controls.ndjson`, `links.ndjson`, `forms.ndjson`, `dialogs.ndjson`, `frames.ndjson`: fuller structured indexes for fallback inspection.
 - `dom.html`: full HTML for fallback inspection.
 - `helpers.json`: helper commands available for the current URL.
 - `diffs/*`: patches from the previous current snapshot to the latest snapshot.
+
+`dump.txt` and the structured indexes redact sensitive hidden/password-like input values and omit script/template bodies. `dom.html` is intentionally raw and should be treated as a fallback artifact.
+
+## Read-only evals
+
+The built-in eval suite opens pages, snapshots them, records artifact sizes, and closes the tabs it created:
+
+```sh
+cdp-cli --no-screenshot evals readonly-sites
+cdp-cli --no-screenshot evals readonly-sites \
+  --site github=https://github.com/ptmr-gnai/cdp-cli \
+  --site webcomponents=https://mdn.github.io/web-components-examples/popup-info-box-web-component/
+```
+
+Use `--keep-open` to leave eval-created tabs open for manual inspection.
 
 ## Site helpers
 
@@ -172,6 +200,7 @@ The daemon is a local CDP proxy. It reads Chrome's `DevToolsActivePort`, connect
 /json/version
 /json/list
 /json/new
+/json/close/<target-id>
 /devtools/page/<target-id>
 ```
 
@@ -187,7 +216,7 @@ Trace logs are JSONL files under:
 .cdp-cli/logs/
 ```
 
-Useful events include `active_port.read.*`, `daemon.browser.connect.*`, `daemon.http.request`, `daemon.target.attach`, and `daemon.target.detach`.
+Useful events include `active_port.read.*`, `daemon.browser.connect.*`, `daemon.http.request`, `daemon.target.attach`, `daemon.target.detach`, and `daemon.target.close`.
 
 ## Notes for live Chrome
 

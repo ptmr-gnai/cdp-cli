@@ -66,11 +66,20 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonState> 
     stdio: "ignore",
     cwd: process.cwd()
   });
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  child.once("exit", (code, signal) => {
+    childExit = { code, signal };
+  });
   child.unref();
 
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     await delay(200);
+    if (childExit) {
+      throw new Error(
+        `cdp-cli daemon exited before startup completed (code ${childExit.code ?? "null"}, signal ${childExit.signal ?? "null"}).`
+      );
+    }
     const state = await readDaemonState(options.outDir);
     if (state) return state;
   }
@@ -94,7 +103,17 @@ export async function serveDaemon(options: DaemonOptions): Promise<void> {
   await fs.ensureDir(options.outDir);
   const browserWsEndpoint = await readActivePortEndpoint(options.browserUrl, options.userDataDir);
   await trace({ event: "daemon.browser.connect.start", data: { browserWsEndpoint } });
-  const browser = (await CDP({ target: browserWsEndpoint, local: true })) as any;
+  let browser: any;
+  try {
+    browser = (await withTimeout(
+      CDP({ target: browserWsEndpoint, local: true }),
+      15_000,
+      "Browser websocket connect"
+    )) as any;
+  } catch (error) {
+    await trace({ event: "daemon.browser.connect.done", ok: false, error: errorData(error) });
+    throw error;
+  }
   await trace({ event: "daemon.browser.connect.done", ok: true, data: { browserWsEndpoint } });
 
   const server = http.createServer(async (req, res) => {
@@ -177,6 +196,19 @@ async function handleHttp(
     const created = await browser.Target.createTarget({ url: targetUrl });
     const targets = await daemonTargets(browser, options.port);
     sendJson(res, 200, targets.find((target: any) => target.id === created.targetId) ?? targets[0]);
+    return;
+  }
+
+  const closeMatch = url.pathname.match(/^\/json\/close\/([^/]+)$/);
+  if (closeMatch) {
+    const targetId = decodeURIComponent(closeMatch[1]);
+    const result = await browser.Target.closeTarget({ targetId });
+    await trace({
+      event: "daemon.target.close",
+      ok: Boolean(result?.success ?? true),
+      data: { targetId }
+    });
+    sendJson(res, 200, { targetId, success: Boolean(result?.success ?? true) });
     return;
   }
 
@@ -275,4 +307,19 @@ function isProcessAlive(pid: number): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    void promise.catch(() => undefined);
+  }
 }

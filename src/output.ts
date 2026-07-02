@@ -34,6 +34,11 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
       rel: "helpers",
       command: `cdp-cli helpers${suffix}`,
       description: "List helpers available for this page."
+    },
+    {
+      rel: "close",
+      command: `cdp-cli close${suffix}`,
+      description: "Close this page target."
     }
   ];
 }

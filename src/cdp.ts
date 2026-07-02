@@ -173,6 +173,35 @@ export async function createTarget(browserUrl: string, url: string, userDataDir?
   }
 }
 
+export async function closeTarget(browserUrl: string, targetId: string, userDataDir?: string): Promise<boolean> {
+  await trace({ event: "target.close.start", data: { browserUrl, targetId, userDataDir } });
+  try {
+    const base = browserUrl.replace(/\/+$/, "");
+    const response = await fetch(`${base}/json/close/${encodeURIComponent(targetId)}`);
+    if (response.ok) {
+      await trace({ event: "target.close.done", ok: true, data: { mode: "http-json", targetId } });
+      return true;
+    }
+    await trace({
+      event: "target.close.http_failed",
+      error: { name: "HttpError", message: `${response.status} ${response.statusText}` }
+    });
+  } catch (error) {
+    await trace({ event: "target.close.http_failed", error: errorData(error) });
+  }
+
+  const browserWsEndpoint = await readActivePortEndpoint(browserUrl, userDataDir);
+  const browser = await connectBrowser(browserWsEndpoint);
+  try {
+    const result = await browser.Target.closeTarget({ targetId });
+    const success = Boolean(result?.success ?? true);
+    await trace({ event: "target.close.done", ok: success, data: { mode: "active-port", targetId } });
+    return success;
+  } finally {
+    await closeClient(browser);
+  }
+}
+
 export async function selectTarget(
   browserUrl: string,
   selector?: string,
@@ -249,7 +278,13 @@ export async function closeClient(client: CdpClient): Promise<void> {
 
 export async function waitForLoad(client: CdpClient, timeoutMs: number): Promise<void> {
   const Page = client.Page;
-  await Page.enable();
+  await trace({ event: "page.wait.start", data: { timeoutMs } });
+  try {
+    await cdpTimeout(Page.enable(), Math.min(timeoutMs, 3000), "Page.enable");
+  } catch (error) {
+    await trace({ event: "page.enable.failed", error: errorData(error) });
+    return;
+  }
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -263,6 +298,22 @@ export async function waitForLoad(client: CdpClient, timeoutMs: number): Promise
     Page.loadEventFired(done);
     Page.domContentEventFired(done);
   });
+  await trace({ event: "page.wait.done", ok: true });
+}
+
+async function cdpTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    void promise.catch(() => undefined);
+  }
 }
 
 async function connectBrowser(browserWsEndpoint: string): Promise<CdpClient> {
@@ -326,6 +377,9 @@ function createSessionClient(browser: CdpClient, sessionId: string): CdpClient {
     },
     Accessibility: {
       getFullAXTree: () => send("Accessibility.getFullAXTree")
+    },
+    DOMSnapshot: {
+      captureSnapshot: (params: Record<string, unknown>) => send("DOMSnapshot.captureSnapshot", params)
     },
     Input: {
       dispatchKeyEvent: (params: Record<string, unknown>) => send("Input.dispatchKeyEvent", params)
