@@ -13,7 +13,7 @@ import {
   waitForLoad
 } from "./cdp.js";
 import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, defaultChromeUserDataDir, resolveOutDir } from "./env.js";
-import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, typeExpression } from "./actions.js";
+import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, sleep, typeExpression } from "./actions.js";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
 import { parseEvalSites, runReadOnlyEvalSites } from "./evalSites.js";
@@ -222,6 +222,35 @@ program
           ok: !action.exception,
           command: "eval",
           data: { target, result: action.result, exception: action.exception ?? null },
+          artifacts: action.artifacts,
+          helpers: helpersForUrl(action.after.meta.url),
+          actions: targetActions(target)
+        };
+      } finally {
+        await closeClient(client);
+      }
+    });
+  });
+
+program
+  .command("wait")
+  .alias("settle")
+  .description("Wait for client-side page changes, recording before/after snapshots and diffs.")
+  .argument("[ms]", "milliseconds to wait", parseIntOption, 1000)
+  .action(async (ms: number) => {
+    await runCommand("wait", async (options) => {
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
+      try {
+        const action = await runRecordedEvaluation(
+          { client, target, outDir: options.outDir, screenshot: options.screenshot },
+          "wait",
+          `(() => ({ waitingMs: ${JSON.stringify(ms)}, href: location.href, title: document.title }))()`,
+          () => sleep(ms)
+        );
+        return {
+          ok: !action.exception,
+          command: "wait",
+          data: { target, waitedMs: ms, result: action.result, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)

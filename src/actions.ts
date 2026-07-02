@@ -69,6 +69,10 @@ export async function runRecordedEvaluation(
   };
 }
 
+export async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type LocatorInput = string | Pick<ResolvedRef, "selector" | "roots" | "ref">;
 
 export function clickExpression(locatorInput: LocatorInput): string {

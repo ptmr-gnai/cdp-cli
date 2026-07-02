@@ -60,6 +60,7 @@ cdp-cli open https://example.com
 cdp-cli snapshot
 cdp-cli current
 cdp-cli eval 'document.title'
+cdp-cli wait 1000
 ```
 
 Every command prints JSON with filesystem paths and suggested next actions.
@@ -77,6 +78,8 @@ cdp-cli current
 cdp-cli orient
 cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
+cdp-cli wait 1000
+cdp-cli settle 1000
 cdp-cli click 'a[href]'
 cdp-cli click n000017
 cdp-cli click n000017 --wait 3000
@@ -175,8 +178,11 @@ Refs such as `n000017` are reusable by action commands until the next snapshot c
 ```sh
 rg 'Search|Login|Submit|selector=' .cdp-cli/targets/*/current/{dump.txt,visible-controls.ndjson,forms.ndjson}
 cdp-cli click n000017
+cdp-cli wait 1000
 cdp-cli fill n000042 'agent query'
 ```
+
+Use `wait` / `settle` after client-side transitions, fetches, timers, or popups. It records a no-op before/after run and writes diffs, making SPA changes visible in the filesystem without reaching for screenshots or raw JS first.
 
 ## Read-only evals
 

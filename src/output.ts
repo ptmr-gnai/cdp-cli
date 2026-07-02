@@ -41,6 +41,11 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
       description: "Evaluate JavaScript and write before/after artifacts."
     },
     {
+      rel: "wait",
+      command: `cdp-cli wait 1000${suffix}`,
+      description: "Wait for SPA/client-side changes and write before/after diffs."
+    },
+    {
       rel: "click-ref",
       command: `cdp-cli click <ref>${suffix}`,
       description: "Click a ref from current.visible-controls.ndjson, controls.ndjson, or dump.txt."
