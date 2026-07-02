@@ -30,6 +30,7 @@ export interface CurrentRefSummary {
   firstVisibleControl?: CurrentRef;
   firstFillable?: CurrentRef;
   firstDialog?: CurrentRef;
+  candidates: CurrentRefCandidate[];
 }
 
 export interface CurrentRef {
@@ -37,6 +38,13 @@ export interface CurrentRef {
   selector?: string;
   tag?: string;
   text?: string;
+  attrs?: Record<string, unknown>;
+  rect?: CurrentRect | null;
+}
+
+export interface CurrentRefCandidate extends CurrentRef {
+  score: number;
+  reasons: string[];
 }
 
 interface CurrentRefRecord {
@@ -46,6 +54,14 @@ interface CurrentRefRecord {
   text?: string;
   visible?: boolean;
   attrs?: Record<string, unknown>;
+  rect?: CurrentRect | null;
+}
+
+interface CurrentRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 const IMPORTANT_FILES = [
@@ -85,7 +101,7 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
         artifacts: {},
         files: [],
         counts: {},
-        refs: {}
+        refs: { candidates: [] }
       },
       suggestedSearches: [],
       nextCommands: [
@@ -166,13 +182,20 @@ async function countIndexes(currentDir: string): Promise<Record<string, number>>
 }
 
 async function summarizeRefs(currentDir: string): Promise<CurrentRefSummary> {
-  const summary: CurrentRefSummary = {};
+  const records: CurrentRefRecord[] = [];
+  const summary: CurrentRefSummary = { candidates: [] };
   for await (const record of readNdjson<CurrentRefRecord>(path.join(currentDir, "visible-controls.ndjson"))) {
     if (!record.ref) continue;
+    records.push(record);
     if (!summary.firstVisibleControl) summary.firstVisibleControl = currentRef(record);
     if (!summary.firstFillable && isFillable(record)) summary.firstFillable = currentRef(record);
-    if (summary.firstVisibleControl && summary.firstFillable) break;
   }
+  summary.candidates = records
+    .map(candidateRef)
+    .sort((a, b) => b.score - a.score || a.ref.localeCompare(b.ref))
+    .slice(0, 8);
+  summary.firstVisibleControl = summary.candidates.find((candidate) => !isFillable(candidate)) ?? summary.firstVisibleControl;
+  summary.firstFillable = summary.candidates.find(isFillable) ?? summary.firstFillable;
   for await (const record of readNdjson<CurrentRefRecord>(path.join(currentDir, "dialogs.ndjson"))) {
     if (record.ref) {
       summary.firstDialog = currentRef(record);
@@ -197,7 +220,69 @@ function currentRef(record: CurrentRefRecord): CurrentRef {
     ref: record.ref ?? "",
     selector: record.selector,
     tag: record.tag,
-    text: record.text
+    text: record.text,
+    attrs: record.attrs,
+    rect: record.rect
+  };
+}
+
+function candidateRef(record: CurrentRefRecord): CurrentRefCandidate {
+  const reasons: string[] = [];
+  const text = cleanText(record.text);
+  const tag = record.tag?.toLowerCase() ?? "";
+  const href = String(record.attrs?.href ?? "");
+  let score = 0;
+
+  if (record.visible) {
+    score += 10;
+    reasons.push("visible");
+  }
+  if (text) {
+    score += Math.min(20, text.length);
+    reasons.push("has text");
+  }
+  if (["button", "input", "textarea", "select"].includes(tag)) {
+    score += 18;
+    reasons.push(`${tag} control`);
+  }
+  if (tag === "a") {
+    score += 6;
+    reasons.push("link");
+  }
+  if (isFillable(record)) {
+    score += 20;
+    reasons.push("fillable");
+  }
+  if (/\b(search|submit|continue|next|login|sign in|save|send|post|apply)\b/i.test(text)) {
+    score += 16;
+    reasons.push("action text");
+  }
+  if (/\b(search|q|query|email|username|password)\b/i.test(String(record.attrs?.name ?? "") + " " + String(record.attrs?.placeholder ?? ""))) {
+    score += 12;
+    reasons.push("input hint");
+  }
+  if (!text && tag === "a") {
+    score -= 10;
+    reasons.push("empty link text");
+  }
+  if (tag === "a" && /^(#|javascript:|void\(0\)|)$/.test(href)) {
+    score -= 6;
+    reasons.push("weak href");
+  }
+  if (/\b(upvote|hide|logo|avatar|icon|rss)\b/i.test(text + " " + href)) {
+    score -= 12;
+    reasons.push("low-value chrome");
+  }
+  if (record.rect && record.rect.y > 800) {
+    const penalty = Math.min(20, Math.floor((record.rect.y - 800) / 50) + 1);
+    score -= penalty;
+    reasons.push("below fold");
+  }
+
+  return {
+    ...currentRef(record),
+    score,
+    reasons
   };
 }
 
@@ -205,6 +290,10 @@ function isFillable(record: CurrentRefRecord): boolean {
   const tag = record.tag?.toLowerCase();
   const type = String(record.attrs?.type ?? "").toLowerCase();
   return tag === "textarea" || tag === "select" || tag === "input" && !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(type);
+}
+
+function cleanText(text: unknown): string {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
 }
 
 async function countLines(file: string): Promise<number> {
