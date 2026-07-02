@@ -76,6 +76,7 @@ const IMPORTANT_FILES = [
   "state.json",
   "text.md",
   "accessibility.json",
+  "accessibility.txt",
   "dom.html",
   "helpers.json"
 ];

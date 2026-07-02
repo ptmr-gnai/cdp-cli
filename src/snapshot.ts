@@ -67,6 +67,25 @@ interface PageDump {
   frames?: PageDumpRecord[];
 }
 
+interface AxTree {
+  nodes?: AxNode[];
+}
+
+interface AxNode {
+  nodeId?: string;
+  childIds?: string[];
+  ignored?: boolean;
+  role?: AxValue;
+  name?: AxValue;
+  value?: AxValue;
+  description?: AxValue;
+  properties?: Array<{ name?: string; value?: AxValue }>;
+}
+
+interface AxValue {
+  value?: unknown;
+}
+
 const PAGE_STATE_EXPRESSION = `(() => {
   const visible = (el) => {
     const style = window.getComputedStyle(el);
@@ -395,7 +414,12 @@ export function targetDir(outDir: string, target: TargetInfo, url = target.url):
   return path.join(outDir, "targets", `${sanitizeFilePart(url)}-${target.id}`);
 }
 
-export function buildDumpText(meta: SnapshotMeta, pageDump: PageDump, helpers: HelperSummary[]): string {
+export function buildDumpText(
+  meta: SnapshotMeta,
+  pageDump: PageDump,
+  helpers: HelperSummary[],
+  accessibilityText?: string
+): string {
   const tree = pageDump.tree ?? [];
   const controls = pageDump.controls ?? [];
   const visibleControls = controls.filter((record) => record.visible);
@@ -416,7 +440,7 @@ export function buildDumpText(meta: SnapshotMeta, pageDump: PageDump, helpers: H
     `HELPERS ${helperCommands.length ? helperCommands.join(" ") : "none"}`,
     "",
     "# suggested-grep",
-    "rg 'CONTROL|FORM|DIALOG|FRAME|#shadow-root|selector=' dump.txt",
+    "rg 'CONTROL|FORM|DIALOG|FRAME|A11Y|#shadow-root|selector=' dump.txt",
     "rg 'Search|Login|Submit|Continue|Next|button|input|dialog' dump.txt",
     "",
     "# visible-controls"
@@ -453,8 +477,56 @@ export function buildDumpText(meta: SnapshotMeta, pageDump: PageDump, helpers: H
   if (frames.length > 40) lines.push(`FRAME_MORE hidden=${frames.length - 40}`);
   if (frames.length === 0) lines.push("FRAME none");
 
+  lines.push("", "# accessibility");
+  if (accessibilityText?.trim()) {
+    lines.push(...accessibilityText.trimEnd().split("\n"));
+  } else {
+    lines.push("A11Y unavailable");
+  }
+
   lines.push("", "# tree", ...tree);
   return `${lines.join("\n")}\n`;
+}
+
+export function buildAccessibilityText(axTree: AxTree): string {
+  const nodes = axTree.nodes ?? [];
+  const lines = ["# cdp-cli accessibility v1"];
+  if (nodes.length === 0) {
+    lines.push("A11Y none");
+    return `${lines.join("\n")}\n`;
+  }
+  for (const node of nodes) {
+    const role = axString(node.role);
+    const name = axString(node.name);
+    const value = axString(node.value);
+    const description = axString(node.description);
+    const props = (node.properties ?? [])
+      .map((property) => {
+        const propertyValue = axString(property.value);
+        return property.name && propertyValue ? `${property.name}=${quote(propertyValue)}` : "";
+      })
+      .filter(Boolean)
+      .slice(0, 20)
+      .join(" ");
+    lines.push([
+      `A11Y [${node.nodeId ?? "unknown"}]`,
+      role ? `role=${quote(role)}` : "",
+      name ? `name=${quote(name)}` : "",
+      value ? `value=${quote(value)}` : "",
+      description ? `description=${quote(description)}` : "",
+      node.ignored !== undefined ? `ignored=${node.ignored}` : "",
+      node.childIds?.length ? `children=${quote(node.childIds.join(","))}` : "",
+      props ? `props={${props}}` : ""
+    ].filter(Boolean).join(" "));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function axString(value: AxValue | undefined): string {
+  const raw = value?.value;
+  if (raw === undefined || raw === null) return "";
+  if (typeof raw === "string") return raw.replace(/\s+/g, " ").trim();
+  return String(raw);
 }
 
 function recordLine(record: PageDumpRecord): string {
@@ -541,7 +613,6 @@ export async function writeSnapshot(
   await fs.ensureDir(dir);
   await fs.writeJson(artifacts.meta, meta, { spaces: 2 });
   await fs.writeJson(artifacts.state, pageState, { spaces: 2 });
-  await fs.writeFile(artifacts.dump, buildDumpText(meta, pageDump, helpers), "utf8");
   await fs.writeFile(artifacts.text, String(textResult.value ?? ""), "utf8");
   await fs.writeFile(artifacts.dom, String(htmlResult.value ?? ""), "utf8");
   await writeNdjson(artifacts.nodes, pageDump.nodes ?? []);
@@ -553,16 +624,22 @@ export async function writeSnapshot(
   await writeNdjson(artifacts.frames, pageDump.frames ?? []);
   await fs.writeJson(artifacts.helpers, helpers, { spaces: 2 });
 
+  let accessibilityText: string | undefined;
   try {
     await trace({ event: "snapshot.accessibility.start", data: { label: options.label } });
     const axTree = await withTimeout(client.Accessibility.getFullAXTree(), 8000, "Accessibility.getFullAXTree");
     artifacts.accessibility = path.join(dir, "accessibility.json");
+    artifacts.accessibilityText = path.join(dir, "accessibility.txt");
     await fs.writeJson(artifacts.accessibility, axTree, { spaces: 2 });
+    accessibilityText = buildAccessibilityText(axTree as AxTree);
+    await fs.writeFile(artifacts.accessibilityText, accessibilityText, "utf8");
     await trace({ event: "snapshot.accessibility.done", ok: true, data: { label: options.label } });
   } catch (error) {
     await trace({ event: "snapshot.accessibility.failed", error: errorData(error) });
     // Some targets do not expose the full accessibility tree. The core snapshot is still useful.
   }
+
+  await fs.writeFile(artifacts.dump, buildDumpText(meta, pageDump, helpers, accessibilityText), "utf8");
 
   try {
     await trace({ event: "snapshot.dom_snapshot.start", data: { label: options.label } });
@@ -641,6 +718,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["forms", "forms.ndjson"],
     ["dialogs", "dialogs.ndjson"],
     ["frames", "frames.ndjson"],
+    ["accessibilityText", "accessibility.txt"],
     ["helpers", "helpers.json"]
   ] as const;
   const artifacts: ArtifactMap = {};

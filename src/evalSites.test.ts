@@ -15,7 +15,7 @@ describe("evaluateSnapshotQuality", () => {
       "HELPERS generic.links generic.forms",
       "",
       "# suggested-grep",
-      "rg 'CONTROL|FORM|DIALOG|FRAME|#shadow-root|selector=' dump.txt",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|A11Y|#shadow-root|selector=' dump.txt",
       "",
       "# visible-controls",
       "CONTROL [n000003] path=\"top\" <button> selector=\"button\" visible=true text=\"Go\"",
@@ -29,6 +29,11 @@ describe("evaluateSnapshotQuality", () => {
       "# frames",
       "FRAME none",
       "",
+      "# accessibility",
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\" name=\"Example\" children=\"2\"",
+      "A11Y [2] role=\"button\" name=\"Go\"",
+      "",
       "# tree",
       "[n000001] <html> selector=\"html\" visible=true",
       "  [n000002] <body> selector=\"html > body\" visible=true",
@@ -37,6 +42,11 @@ describe("evaluateSnapshotQuality", () => {
       "      [n000005] <span> selector=\"span\" visible=true text=\"Help\""
     ].join("\n") + "\n");
     await fs.writeFile(path.join(dir, "text.md"), "Go\nHelp\n");
+    await fs.writeFile(path.join(dir, "accessibility.txt"), [
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\" name=\"Example\" children=\"2\"",
+      "A11Y [2] role=\"button\" name=\"Go\""
+    ].join("\n") + "\n");
     await writeNdjson(path.join(dir, "nodes.ndjson"), [{ ref: "n000001" }, { ref: "n000003" }]);
     await writeNdjson(path.join(dir, "links.ndjson"), []);
     await writeNdjson(path.join(dir, "controls.ndjson"), [{ ref: "n000003" }]);
@@ -48,7 +58,8 @@ describe("evaluateSnapshotQuality", () => {
     await expect(evaluateSnapshotQuality(dir)).resolves.toMatchObject({
       ok: true,
       counts: {
-        dumpLines: 26,
+        dumpLines: 31,
+        accessibilityLines: 3,
         textLines: 2,
         nodes: 2,
         controls: 1,
@@ -60,6 +71,7 @@ describe("evaluateSnapshotQuality", () => {
         counts: true,
         helpers: true,
         suggestedGrep: true,
+        accessibility: true,
         tree: true
       },
       warnings: []
@@ -95,6 +107,7 @@ describe("evaluateSnapshotQuality", () => {
           dumpSections: { page: true, tree: true },
           counts: {
             dumpLines: 20,
+            accessibilityLines: 3,
             textLines: 3,
             nodes: 7,
             links: 1,
@@ -119,6 +132,7 @@ describe("evaluateSnapshotQuality", () => {
           dumpSections: { page: true, tree: false },
           counts: {
             dumpLines: 1,
+            accessibilityLines: 0,
             textLines: 0,
             nodes: 0,
             links: 0,
@@ -159,6 +173,7 @@ async function writeRequiredArtifacts(dir: string): Promise<void> {
     fs.writeJson(path.join(dir, "state.json"), {}),
     fs.writeFile(path.join(dir, "dom.html"), "<html></html>"),
     fs.writeJson(path.join(dir, "accessibility.json"), {}),
+    fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\n"),
     fs.writeJson(path.join(dir, "dom-snapshot.json"), {}),
     fs.writeJson(path.join(dir, "helpers.json"), [])
   ]);

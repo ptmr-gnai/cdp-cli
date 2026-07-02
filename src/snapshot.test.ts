@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDumpText } from "./snapshot.js";
+import { buildAccessibilityText, buildDumpText } from "./snapshot.js";
 import type { HelperSummary, SnapshotMeta } from "./types.js";
 
 const meta: SnapshotMeta = {
@@ -27,6 +27,17 @@ const helpers: HelperSummary[] = [
 
 describe("buildDumpText", () => {
   it("adds grep-native orientation sections before the raw tree", () => {
+    const accessibilityText = buildAccessibilityText({
+      nodes: [
+        { nodeId: "1", role: { value: "RootWebArea" }, name: { value: "Example Login" }, childIds: ["2"] },
+        {
+          nodeId: "2",
+          role: { value: "button" },
+          name: { value: "Continue" },
+          properties: [{ name: "focusable", value: { value: true } }]
+        }
+      ]
+    });
     const dump = buildDumpText(meta, {
       tree: [
         "[n000001] <html> selector=\"html\" visible=true",
@@ -77,7 +88,7 @@ describe("buildDumpText", () => {
       frames: [
         { ref: "n000006", tag: "iframe", selector: "iframe", visible: true, src: "https://example.com/frame", sameOrigin: false }
       ]
-    }, helpers);
+    }, helpers, accessibilityText);
 
     expect(dump).toContain("# cdp-cli dump v1");
     expect(dump).toContain("PAGE title=\"Example Login\"");
@@ -88,7 +99,32 @@ describe("buildDumpText", () => {
     expect(dump).toContain("controls=\"input:name=\\\"email\\\":type=\\\"email\\\":placeholder=\\\"Email\\\" button:text=\\\"Sign in\\\"\"");
     expect(dump).toContain("DIALOG [n000005] <dialog>");
     expect(dump).toContain("FRAME [n000006] <iframe>");
+    expect(dump).toContain("# accessibility\n# cdp-cli accessibility v1");
+    expect(dump).toContain("A11Y [2] role=\"button\" name=\"Continue\"");
     expect(dump).toContain("# tree\n[n000001] <html>");
     expect(dump).toContain("#shadow-root(open) host=n000002");
+  });
+
+  it("formats accessibility tree records for grep", () => {
+    const text = buildAccessibilityText({
+      nodes: [
+        {
+          nodeId: "17",
+          role: { value: "textbox" },
+          name: { value: "Search docs" },
+          value: { value: "" },
+          ignored: false,
+          childIds: ["18"],
+          properties: [
+            { name: "editable", value: { value: "plaintext" } },
+            { name: "focusable", value: { value: true } }
+          ]
+        }
+      ]
+    });
+
+    expect(text).toContain("# cdp-cli accessibility v1");
+    expect(text).toContain("A11Y [17] role=\"textbox\" name=\"Search docs\" ignored=false children=\"18\"");
+    expect(text).toContain("props={editable=\"plaintext\" focusable=\"true\"}");
   });
 });

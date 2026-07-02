@@ -34,6 +34,7 @@ export interface EvalSiteQuality {
   dumpSections: Record<string, boolean>;
   counts: {
     dumpLines: number;
+    accessibilityLines: number;
     textLines: number;
     nodes: number;
     links: number;
@@ -206,6 +207,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
   const dumpSections = await dumpSectionPresence(path.join(snapshotDir, "dump.txt"));
   const counts = {
     dumpLines: await countLines(path.join(snapshotDir, "dump.txt")),
+    accessibilityLines: await countLines(path.join(snapshotDir, "accessibility.txt")),
     textLines: await countLines(path.join(snapshotDir, "text.md")),
     nodes: await countNdjson(path.join(snapshotDir, "nodes.ndjson")),
     links: await countNdjson(path.join(snapshotDir, "links.ndjson")),
@@ -223,7 +225,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     dumpSections,
     counts,
     suggestedSearches: [
-      `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME)' '${snapshotDir}/dump.txt'`,
+      `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME|A11Y)' '${snapshotDir}/dump.txt' '${snapshotDir}/accessibility.txt'`,
       `rg '#shadow-root|#frame|path="top >' '${snapshotDir}/dump.txt'`,
       `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' '${snapshotDir}/dump.txt'`
     ],
@@ -246,6 +248,7 @@ async function requiredFilePresence(snapshotDir: string): Promise<Record<string,
     "dialogs.ndjson",
     "frames.ndjson",
     "accessibility.json",
+    "accessibility.txt",
     "dom-snapshot.json",
     "helpers.json"
   ];
@@ -277,6 +280,7 @@ async function dumpSectionPresence(dumpPath: string): Promise<Record<string, boo
     forms: /^# forms$/m.test(text),
     dialogs: /^# dialogs$/m.test(text),
     frames: /^# frames$/m.test(text),
+    accessibility: /^# accessibility$/m.test(text),
     tree: /^# tree$/m.test(text)
   };
 }

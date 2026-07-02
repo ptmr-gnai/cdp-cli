@@ -140,6 +140,7 @@ Artifacts are written under `.cdp-cli/` by default:
         dialogs.ndjson
         frames.ndjson
         accessibility.json
+        accessibility.txt
         dom-snapshot.json
         helpers.json
         screenshot.png
@@ -159,11 +160,12 @@ Artifacts are written under `.cdp-cli/` by default:
 The important files for agents are usually:
 
 - `state.json`: URL, title, viewport, headings, controls, dialogs, active element, and metadata.
-- `dump.txt`: grep-first page projection with page metadata, counts, helper commands, visible controls, forms, dialogs, frames, suggested `rg` commands, and then the raw tree. Control lines include refs, selectors, visibility, rects, text, and `path="top > ..."` markers for same-origin frames and open shadow roots.
+- `dump.txt`: grep-first page projection with page metadata, counts, helper commands, visible controls, forms, dialogs, frames, accessibility records, suggested `rg` commands, and then the raw tree. Control lines include refs, selectors, visibility, rects, text, and `path="top > ..."` markers for same-origin frames and open shadow roots.
 - `text.md`: readable page text.
 - `nodes.ndjson`: one structured record for every element in `dump.txt`; action refs use this to traverse shadow roots and same-origin frames.
 - `visible-controls.ndjson`: visible links/buttons/inputs/selectors to try first.
 - `controls.ndjson`, `links.ndjson`, `forms.ndjson`, `dialogs.ndjson`, `frames.ndjson`: fuller structured indexes for fallback inspection.
+- `accessibility.txt`: grep-first accessibility tree records derived from CDP `Accessibility.getFullAXTree`.
 - `dom.html`: full HTML for fallback inspection.
 - `helpers.json`: helper commands available for the current URL.
 - `diffs/*`: patches from the previous current snapshot to the latest snapshot.
