@@ -5,8 +5,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "fs-extra";
 import { WebSocketServer, WebSocket } from "ws";
-import CDP from "chrome-remote-interface";
-import { readActivePortEndpoint } from "./cdp.js";
+import { connectBrowser, readActivePortEndpoint } from "./cdp.js";
 import { trace, errorData } from "./trace.js";
 
 const require = createRequire(import.meta.url);
@@ -105,11 +104,7 @@ export async function serveDaemon(options: DaemonOptions): Promise<void> {
   await trace({ event: "daemon.browser.connect.start", data: { browserWsEndpoint } });
   let browser: any;
   try {
-    browser = (await withTimeout(
-      CDP({ target: browserWsEndpoint, local: true }),
-      15_000,
-      "Browser websocket connect"
-    )) as any;
+    browser = await connectBrowser(browserWsEndpoint);
   } catch (error) {
     await trace({ event: "daemon.browser.connect.done", ok: false, error: errorData(error) });
     throw error;
@@ -307,19 +302,4 @@ function isProcessAlive(pid: number): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-      })
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-    void promise.catch(() => undefined);
-  }
 }

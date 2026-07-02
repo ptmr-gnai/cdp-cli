@@ -39,6 +39,8 @@ Override the location when needed:
 cdp-cli --user-data-dir "/path/to/Chrome/User Data" status
 ```
 
+If `status` reports that the browser WebSocket timed out, check that Chrome remote debugging is still enabled, accept any Chrome permission prompt, and retry. `cdp-cli` bounds this path so agents get a JSON error quickly instead of waiting on a stuck socket.
+
 For older/manual flows, launch Chrome with a non-default profile:
 
 ```sh

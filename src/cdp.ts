@@ -2,10 +2,16 @@ import CDP from "chrome-remote-interface";
 import { z } from "zod";
 import fs from "fs-extra";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { WebSocket } from "ws";
 import { errorData, trace } from "./trace.js";
 import type { TargetInfo } from "./types.js";
 
 type CdpClient = any;
+
+const HTTP_DISCOVERY_TIMEOUT_MS = 3000;
+const TARGET_LIST_TIMEOUT_MS = 5000;
+const BROWSER_CONNECT_TIMEOUT_MS = 5000;
 
 const VersionSchema = z.object({
   Browser: z.string().optional(),
@@ -42,7 +48,19 @@ export function parseBrowserUrl(browserUrl: string): BrowserEndpoint {
 
 export async function fetchJson<T>(browserUrl: string, path: string): Promise<T> {
   const base = browserUrl.replace(/\/+$/, "");
-  const response = await fetch(`${base}${path}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_DISCOVERY_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, { signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`CDP endpoint ${path} timed out after ${HTTP_DISCOVERY_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new Error(`CDP endpoint ${path} returned ${response.status} ${response.statusText}`);
   }
@@ -52,10 +70,8 @@ export async function fetchJson<T>(browserUrl: string, path: string): Promise<T>
 export async function getBrowserStatus(browserUrl: string, userDataDir?: string): Promise<BrowserStatus> {
   await trace({ event: "status.start", data: { browserUrl, userDataDir } });
   try {
-    const [version, targets] = await Promise.all([
-      fetchJson<Record<string, unknown>>(browserUrl, "/json/version"),
-      listTargets(browserUrl, userDataDir)
-    ]);
+    const version = await fetchJson<Record<string, unknown>>(browserUrl, "/json/version");
+    const targets = await listTargets(browserUrl, userDataDir);
 
     return {
       browserUrl,
@@ -99,11 +115,15 @@ export async function listTargets(browserUrl: string, userDataDir?: string): Pro
   const endpoint = parseBrowserUrl(browserUrl);
   let targets: TargetInfo[];
   try {
-    targets = (await CDP.List({
-      host: endpoint.host,
-      port: endpoint.port,
-      secure: endpoint.secure
-    })) as TargetInfo[];
+    targets = (await cdpTimeout(
+      CDP.List({
+        host: endpoint.host,
+        port: endpoint.port,
+        secure: endpoint.secure
+      }),
+      TARGET_LIST_TIMEOUT_MS,
+      "CDP target list"
+    )) as TargetInfo[];
   } catch (error) {
     await trace({ event: "targets.list.http_failed", error: errorData(error) });
     try {
@@ -324,14 +344,124 @@ async function cdpTimeout<T>(promise: Promise<T>, ms: number, label: string): Pr
   }
 }
 
-async function connectBrowser(browserWsEndpoint: string): Promise<CdpClient> {
+export async function connectBrowser(browserWsEndpoint: string): Promise<CdpClient> {
   await trace({ event: "browser.connect.start", data: { browserWsEndpoint } });
-  const browser = (await CDP({
-    target: browserWsEndpoint,
-    local: true
-  })) as CdpClient;
-  await trace({ event: "browser.connect.done", ok: true, data: { browserWsEndpoint } });
-  return browser;
+  try {
+    const browser = await BrowserWebSocketClient.connect(browserWsEndpoint, BROWSER_CONNECT_TIMEOUT_MS);
+    await trace({ event: "browser.connect.done", ok: true, data: { browserWsEndpoint } });
+    return browser;
+  } catch (error) {
+    const wrapped = new Error(activePortConnectionMessage(browserWsEndpoint, error));
+    await trace({ event: "browser.connect.done", ok: false, error: errorData(wrapped) });
+    throw wrapped;
+  }
+}
+
+class BrowserWebSocketClient extends EventEmitter {
+  webSocketUrl: string;
+  Browser: { getVersion: () => Promise<unknown> };
+  Target: {
+    getTargets: () => Promise<unknown>;
+    createTarget: (params: Record<string, unknown>) => Promise<unknown>;
+    closeTarget: (params: Record<string, unknown>) => Promise<unknown>;
+    attachToTarget: (params: Record<string, unknown>) => Promise<unknown>;
+    detachFromTarget: (params: Record<string, unknown>) => Promise<unknown>;
+  };
+
+  private nextId = 1;
+  private pending = new Map<number, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }>();
+
+  private constructor(private ws: WebSocket, webSocketUrl: string) {
+    super();
+    this.webSocketUrl = webSocketUrl;
+    this.Browser = {
+      getVersion: () => this.send("Browser.getVersion")
+    };
+    this.Target = {
+      getTargets: () => this.send("Target.getTargets"),
+      createTarget: (params) => this.send("Target.createTarget", params),
+      closeTarget: (params) => this.send("Target.closeTarget", params),
+      attachToTarget: (params) => this.send("Target.attachToTarget", params),
+      detachFromTarget: (params) => this.send("Target.detachFromTarget", params)
+    };
+
+    ws.on("message", (raw) => this.handleMessage(raw.toString()));
+    ws.on("error", (error) => this.rejectAll(error instanceof Error ? error : new Error(String(error))));
+    ws.on("close", () => this.rejectAll(new Error("Chrome browser WebSocket closed.")));
+  }
+
+  static connect(webSocketUrl: string, timeoutMs: number): Promise<BrowserWebSocketClient> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(webSocketUrl);
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error(`Chrome browser WebSocket connect timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      ws.once("open", () => {
+        clearTimeout(timer);
+        resolve(new BrowserWebSocketClient(ws, webSocketUrl));
+      });
+      ws.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
+  }
+
+  send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<unknown> {
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("Chrome browser WebSocket is not open."));
+    }
+    const id = this.nextId++;
+    const message: Record<string, unknown> = { id, method, params: params ?? {} };
+    if (sessionId) message.sessionId = sessionId;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.ws.send(JSON.stringify(message), (error) => {
+        if (!error) return;
+        this.pending.delete(id);
+        reject(error);
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    this.ws.close();
+  }
+
+  private handleMessage(raw: string): void {
+    let message: any;
+    try {
+      message = JSON.parse(raw);
+    } catch {
+      return;
+    }
+
+    if (typeof message.id === "number") {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) {
+        pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+      } else {
+        pending.resolve(message.result ?? {});
+      }
+      return;
+    }
+
+    if (message.method) {
+      this.emit("event", message);
+      if (message.sessionId) this.emit(`${message.method}.${message.sessionId}`, message.params ?? {});
+    }
+  }
+
+  private rejectAll(error: Error): void {
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+  }
 }
 
 async function listTargetsFromBrowser(browser: CdpClient, browserUrl: string): Promise<TargetInfo[]> {
@@ -425,7 +555,17 @@ export async function readActivePortEndpoint(
 
 function isHttpDiscoveryError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return /404 Not Found|Unexpected server response|ECONNREFUSED|fetch failed|target list/i.test(
+  return /404 Not Found|404|Unexpected server response|ECONNREFUSED|fetch failed|target list|timed out/i.test(
     error.message
   );
+}
+
+function activePortConnectionMessage(browserWsEndpoint: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    `Unable to connect to Chrome browser WebSocket ${browserWsEndpoint}.`,
+    message,
+    "Chrome's live-profile remote debugging server may be disabled, waiting on its permission prompt, or using a stale DevToolsActivePort file.",
+    "Check chrome://settings/remoteDebugging, accept the browser prompt, then retry. If Chrome was restarted, run cdp-cli status again so the active port is refreshed."
+  ].join(" ");
 }
