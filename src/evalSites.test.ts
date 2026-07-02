@@ -86,6 +86,17 @@ describe("evaluateSnapshotQuality", () => {
         accessibility: true,
         tree: true
       },
+      coverage: {
+        filesReady: true,
+        dumpNavigable: true,
+        grepReady: true,
+        actionReady: true,
+        accessibilityReady: true,
+        networkReady: true,
+        frameCoverage: false,
+        shadowCoverage: true,
+        dialogCoverage: false
+      },
       warnings: []
     });
   });
@@ -104,6 +115,18 @@ describe("evaluateSnapshotQuality", () => {
     expect(quality.warnings).toContain("dump.txt missing section: tree");
     expect(quality.warnings).toContain("nodes.ndjson has no records");
     expect(quality.warnings).toContain("text.md has no readable text lines");
+    expect(quality.warnings).toContain("accessibility.txt is too thin for a11y-first inspection");
+    expect(quality.warnings).toContain("resources.ndjson and scripts.ndjson have no records");
+    expect(quality.coverage).toMatchObject({
+      filesReady: false,
+      dumpNavigable: false,
+      grepReady: false,
+      actionReady: false,
+      accessibilityReady: false,
+      networkReady: false
+    });
+    expect(quality.suggestedSearches.join("\n")).toContain("visible-controls.ndjson");
+    expect(quality.suggestedSearches.join("\n")).toContain("resources.ndjson");
   });
 
   it("summarizes eval site results into an agent-readable matrix", () => {
@@ -117,6 +140,17 @@ describe("evaluateSnapshotQuality", () => {
           ok: true,
           requiredFiles: { "dump.txt": true },
           dumpSections: { page: true, tree: true },
+          coverage: {
+            filesReady: true,
+            dumpNavigable: true,
+            grepReady: true,
+            actionReady: true,
+            accessibilityReady: true,
+            networkReady: true,
+            frameCoverage: false,
+            shadowCoverage: false,
+            dialogCoverage: false
+          },
           counts: {
             dumpLines: 20,
             accessibilityLines: 3,
@@ -144,6 +178,17 @@ describe("evaluateSnapshotQuality", () => {
           ok: false,
           requiredFiles: { "dump.txt": true, "accessibility.json": false },
           dumpSections: { page: true, tree: false },
+          coverage: {
+            filesReady: false,
+            dumpNavigable: false,
+            grepReady: false,
+            actionReady: false,
+            accessibilityReady: false,
+            networkReady: false,
+            frameCoverage: false,
+            shadowCoverage: false,
+            dialogCoverage: false
+          },
           counts: {
             dumpLines: 1,
             accessibilityLines: 0,
@@ -169,7 +214,14 @@ describe("evaluateSnapshotQuality", () => {
       ok: 1,
       failed: 1,
       matrix: [
-        { id: "ok-site", ok: true, snapshotDir: "/tmp/snap", warnings: [], suggestedSearches: ["rg CONTROL /tmp/snap/dump.txt"] },
+        {
+          id: "ok-site",
+          ok: true,
+          snapshotDir: "/tmp/snap",
+          warnings: [],
+          coverage: { grepReady: true, actionReady: true, accessibilityReady: true, networkReady: true },
+          suggestedSearches: ["rg CONTROL /tmp/snap/dump.txt"]
+        },
         { id: "thin-site", ok: false, warnings: ["missing required artifact: accessibility.json", "dump.txt missing section: tree"] }
       ],
       failedRequiredFiles: [{ id: "thin-site", files: ["accessibility.json"] }],

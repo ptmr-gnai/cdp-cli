@@ -32,6 +32,7 @@ export interface EvalSiteQuality {
   ok: boolean;
   requiredFiles: Record<string, boolean>;
   dumpSections: Record<string, boolean>;
+  coverage: EvalSiteCoverage;
   counts: {
     dumpLines: number;
     accessibilityLines: number;
@@ -51,6 +52,18 @@ export interface EvalSiteQuality {
   warnings: string[];
 }
 
+export interface EvalSiteCoverage {
+  filesReady: boolean;
+  dumpNavigable: boolean;
+  grepReady: boolean;
+  actionReady: boolean;
+  accessibilityReady: boolean;
+  networkReady: boolean;
+  frameCoverage: boolean;
+  shadowCoverage: boolean;
+  dialogCoverage: boolean;
+}
+
 export interface EvalSiteSummaryRow {
   id: string;
   ok: boolean;
@@ -58,6 +71,7 @@ export interface EvalSiteSummaryRow {
   snapshotDir?: string;
   counts?: EvalSiteQuality["counts"];
   dumpSections?: Record<string, boolean>;
+  coverage?: EvalSiteCoverage;
   warnings: string[];
   suggestedSearches: string[];
   error?: string;
@@ -161,6 +175,7 @@ export function summarizeEvalSiteResults(results: EvalSiteResult[]): {
     snapshotDir: result.snapshotDir,
     counts: result.quality?.counts,
     dumpSections: result.quality?.dumpSections,
+    coverage: result.quality?.coverage,
     warnings: result.quality?.warnings ?? (result.error ? [result.error] : []),
     suggestedSearches: result.quality?.suggestedSearches ?? [],
     error: result.error
@@ -222,16 +237,20 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     scripts: await countNdjson(path.join(snapshotDir, "scripts.ndjson")),
     openShadowRoots: await countPattern(path.join(snapshotDir, "dump.txt"), "#shadow-root(open)")
   };
-  const warnings = qualityWarnings(requiredFiles, dumpSections, counts);
+  const coverage = qualityCoverage(requiredFiles, dumpSections, counts);
+  const warnings = qualityWarnings(requiredFiles, dumpSections, counts, coverage);
   return {
     ok: warnings.length === 0,
     requiredFiles,
     dumpSections,
+    coverage,
     counts,
     suggestedSearches: [
       `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y)' '${snapshotDir}/dump.txt' '${snapshotDir}/accessibility.txt'`,
       `rg '#shadow-root|#frame|path="top >' '${snapshotDir}/dump.txt'`,
-      `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' '${snapshotDir}/dump.txt'`
+      `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' '${snapshotDir}/dump.txt'`,
+      `rg '\"ref\":\"n[0-9]+\"|\"selector\":|\"accessibleName\":' '${snapshotDir}/visible-controls.ndjson' '${snapshotDir}/controls.ndjson' '${snapshotDir}/forms.ndjson'`,
+      `rg 'script|fetch|xmlhttprequest|navigation|resource' '${snapshotDir}/resources.ndjson' '${snapshotDir}/scripts.ndjson'`
     ],
     warnings
   };
@@ -293,10 +312,29 @@ async function dumpSectionPresence(dumpPath: string): Promise<Record<string, boo
   };
 }
 
-function qualityWarnings(
+function qualityCoverage(
   requiredFiles: Record<string, boolean>,
   dumpSections: Record<string, boolean>,
   counts: EvalSiteQuality["counts"]
+): EvalSiteCoverage {
+  return {
+    filesReady: Object.values(requiredFiles).every(Boolean),
+    dumpNavigable: Object.values(dumpSections).every(Boolean),
+    grepReady: counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0,
+    actionReady: counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0,
+    accessibilityReady: counts.accessibilityLines > 1,
+    networkReady: counts.resources > 0 || counts.scripts > 0,
+    frameCoverage: counts.frames > 0,
+    shadowCoverage: counts.openShadowRoots > 0,
+    dialogCoverage: counts.dialogs > 0
+  };
+}
+
+function qualityWarnings(
+  requiredFiles: Record<string, boolean>,
+  dumpSections: Record<string, boolean>,
+  counts: EvalSiteQuality["counts"],
+  coverage: EvalSiteCoverage
 ): string[] {
   const warnings: string[] = [];
   for (const [file, present] of Object.entries(requiredFiles)) {
@@ -308,9 +346,9 @@ function qualityWarnings(
   if (counts.dumpLines < 5) warnings.push(`dump.txt is too small: ${counts.dumpLines} lines`);
   if (counts.nodes < 1) warnings.push("nodes.ndjson has no records");
   if (counts.textLines < 1) warnings.push("text.md has no readable text lines");
-  if (counts.visibleControls < 1 && counts.links < 1 && counts.forms < 1) {
-    warnings.push("no visible controls, links, or forms were indexed");
-  }
+  if (!coverage.actionReady) warnings.push("no visible controls, links, or forms were indexed");
+  if (!coverage.accessibilityReady) warnings.push("accessibility.txt is too thin for a11y-first inspection");
+  if (!coverage.networkReady) warnings.push("resources.ndjson and scripts.ndjson have no records");
   return warnings;
 }
 
