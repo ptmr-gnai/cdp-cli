@@ -54,6 +54,7 @@ describe("buildDumpText", () => {
           tag: "button",
           selector: "button",
           visible: true,
+          accessibleName: "Continue action",
           text: "Continue"
         }
       ],
@@ -64,6 +65,7 @@ describe("buildDumpText", () => {
           tag: "button",
           selector: "button",
           visible: true,
+          accessibleName: "Continue action",
           text: "Continue"
         }
       ],
@@ -77,7 +79,7 @@ describe("buildDumpText", () => {
           action: "https://example.com/session",
           method: "post",
           controls: [
-            { tag: "input", name: "email", type: "email", placeholder: "Email" },
+            { tag: "input", name: "email", type: "email", accessibleName: "Email address" },
             { tag: "button", text: "Sign in" }
           ]
         }
@@ -106,8 +108,9 @@ describe("buildDumpText", () => {
     expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 openShadowRoots=1");
     expect(dump).toContain("HELPERS generic.links generic.forms");
     expect(dump).toContain("CONTROL [n000003] path=\"top > n000002#shadow-root\" <button>");
+    expect(dump).toContain("label=\"Continue action\" text=\"Continue\"");
     expect(dump).toContain("FORM [n000004] <form>");
-    expect(dump).toContain("controls=\"input:name=\\\"email\\\":type=\\\"email\\\":placeholder=\\\"Email\\\" button:text=\\\"Sign in\\\"\"");
+    expect(dump).toContain("controls=\"input:name=\\\"email\\\":type=\\\"email\\\":label=\\\"Email address\\\" button:text=\\\"Sign in\\\"\"");
     expect(dump).toContain("DIALOG [n000005] <dialog>");
     expect(dump).toContain("FRAME [n000006] <iframe>");
     expect(dump).toContain("RESOURCE type=\"script\" url=\"https://example.com/app.js\" durationMs=42 transfer=1024 encoded=900 decoded=1800 renderBlocking=\"non-blocking\"");

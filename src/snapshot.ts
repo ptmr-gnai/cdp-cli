@@ -46,6 +46,7 @@ interface PageDumpRecord {
   visible?: boolean;
   rect?: unknown;
   text?: string;
+  accessibleName?: string;
   href?: string;
   src?: string | null;
   sameOrigin?: boolean;
@@ -299,6 +300,25 @@ const PAGE_DUMP_EXPRESSION = `(() => {
       (el.children.length === 0 ? el.textContent : '')
     );
   };
+  const accessibleNameOf = (el) => {
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) return clip(ariaLabel);
+    const labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)
+      .map((id) => document.getElementById(id)?.textContent || '')
+      .join(' ');
+    if (labelledBy.trim()) return clip(labelledBy);
+    if ('labels' in el && el.labels?.length) {
+      const labelText = [...el.labels].map((label) => label.innerText || label.textContent || '').join(' ');
+      if (labelText.trim()) return clip(labelText);
+    }
+    if (el.id) {
+      const explicit = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (explicit?.textContent?.trim()) return clip(explicit.textContent);
+    }
+    const closest = el.closest?.('label');
+    if (closest?.textContent?.trim()) return clip(closest.textContent);
+    return clip(el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || '');
+  };
   const textOf = (el) => {
     if (el.localName === 'script') return el.textContent ? '[script text omitted]' : '';
     if (el.localName === 'template') return el.textContent ? '[template text omitted]' : '';
@@ -313,7 +333,8 @@ const PAGE_DUMP_EXPRESSION = `(() => {
     role: el.getAttribute('role'),
     visible: visible(el),
     rect: rectOf(el),
-    text: textOf(el)
+    text: textOf(el),
+    accessibleName: accessibleNameOf(el)
   });
   const isControl = (el) => el.matches?.('a[href], button, input, textarea, select, option, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [contenteditable="true"]');
   const isDialog = (el) => el.matches?.('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [popover]');
@@ -379,6 +400,7 @@ const PAGE_DUMP_EXPRESSION = `(() => {
               name: control.getAttribute('name'),
               type: control.getAttribute('type'),
               placeholder: control.getAttribute('placeholder'),
+              accessibleName: accessibleNameOf(control),
               text: textOf(control)
             }))
         });
@@ -490,6 +512,7 @@ export function buildDumpText(
         control.name ? `name=${quote(control.name)}` : "",
         control.type ? `type=${quote(control.type)}` : "",
         control.placeholder ? `placeholder=${quote(control.placeholder)}` : "",
+        control.accessibleName ? `label=${quote(control.accessibleName)}` : "",
         control.text ? `text=${quote(control.text)}` : ""
       ].filter(Boolean).join(":"))
       .join(" ");
@@ -586,6 +609,7 @@ function recordLine(record: PageDumpRecord): string {
     record.selector ? `selector=${quote(record.selector)}` : "",
     record.visible !== undefined ? `visible=${record.visible}` : "",
     record.rect ? `rect=${JSON.stringify(record.rect)}` : "",
+    record.accessibleName ? `label=${quote(record.accessibleName)}` : "",
     record.text ? `text=${quote(record.text)}` : "",
     record.attrs ? attrsLine(record.attrs) : ""
   ].filter(Boolean).join(" ");

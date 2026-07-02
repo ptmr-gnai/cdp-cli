@@ -49,7 +49,7 @@ describe("readCurrentSnapshotSummary", () => {
       [
         { ref: "n000003", selector: "a.logo", tag: "a", attrs: { href: "/" }, visible: true, text: "" },
         { ref: "n000017", selector: "button", tag: "button", visible: true, text: "Search" },
-        { ref: "n000042", selector: "input", tag: "input", attrs: { type: "text" }, visible: true }
+        { ref: "n000042", selector: "input", tag: "input", attrs: { type: "text" }, accessibleName: "Email address", visible: true }
       ].map((record) => JSON.stringify(record)).join("\n") + "\n"
     );
     await fs.writeFile(path.join(current, "nodes.ndjson"), `${JSON.stringify({ ref: "n000001" })}\n`);
@@ -71,11 +71,11 @@ describe("readCurrentSnapshotSummary", () => {
     });
     expect(summary.current.refs).toMatchObject({
       firstVisibleControl: { ref: "n000017", tag: "button", text: "Search" },
-      firstFillable: { ref: "n000042", tag: "input" }
+      firstFillable: { ref: "n000042", tag: "input", text: "Email address" }
     });
     expect(summary.current.refs.candidates[0]).toMatchObject({
-      ref: "n000017",
-      reasons: expect.arrayContaining(["action text"])
+      ref: "n000042",
+      reasons: expect.arrayContaining(["input hint", "fillable"])
     });
     expect(summary.current.refs.candidates.find((candidate) => candidate.ref === "n000042")).toMatchObject({
       ref: "n000042",

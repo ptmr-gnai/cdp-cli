@@ -52,6 +52,7 @@ interface CurrentRefRecord {
   selector?: string;
   tag?: string;
   text?: string;
+  accessibleName?: string;
   visible?: boolean;
   attrs?: Record<string, unknown>;
   rect?: CurrentRect | null;
@@ -223,7 +224,7 @@ function currentRef(record: CurrentRefRecord): CurrentRef {
     ref: record.ref ?? "",
     selector: record.selector,
     tag: record.tag,
-    text: record.text,
+    text: bestLabel(record),
     attrs: record.attrs,
     rect: record.rect
   };
@@ -231,7 +232,7 @@ function currentRef(record: CurrentRefRecord): CurrentRef {
 
 function candidateRef(record: CurrentRefRecord): CurrentRefCandidate {
   const reasons: string[] = [];
-  const text = cleanText(record.text);
+  const text = bestLabel(record);
   const tag = record.tag?.toLowerCase() ?? "";
   const href = String(record.attrs?.href ?? "");
   let score = 0;
@@ -260,7 +261,7 @@ function candidateRef(record: CurrentRefRecord): CurrentRefCandidate {
     score += 16;
     reasons.push("action text");
   }
-  if (/\b(search|q|query|email|username|password)\b/i.test(String(record.attrs?.name ?? "") + " " + String(record.attrs?.placeholder ?? ""))) {
+  if (/\b(search|q|query|email|username|password)\b/i.test(String(record.attrs?.name ?? "") + " " + String(record.attrs?.placeholder ?? "") + " " + String(record.accessibleName ?? ""))) {
     score += 12;
     reasons.push("input hint");
   }
@@ -297,6 +298,10 @@ function isFillable(record: CurrentRefRecord): boolean {
 
 function cleanText(text: unknown): string {
   return String(text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function bestLabel(record: CurrentRefRecord): string {
+  return cleanText(record.accessibleName || record.text);
 }
 
 async function countLines(file: string): Promise<number> {
