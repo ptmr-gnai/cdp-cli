@@ -3,6 +3,7 @@ import fs from "fs-extra";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { nowStamp, sanitizeFilePart } from "./env.js";
 import { findHelperCommand, helperSummaries } from "./helpers.js";
+import type { ResolvedRef } from "./refs.js";
 import type { ArtifactMap, SnapshotResult, TargetInfo } from "./types.js";
 
 type CdpClient = any;
@@ -68,23 +69,28 @@ export async function runRecordedEvaluation(
   };
 }
 
-export function clickExpression(selector: string): string {
+type LocatorInput = string | Pick<ResolvedRef, "selector" | "roots" | "ref">;
+
+export function clickExpression(locatorInput: LocatorInput): string {
   return `(() => {
-    const selector = ${JSON.stringify(selector)};
-    const el = document.querySelector(selector);
-    if (!el) throw new Error('No element matched selector: ' + selector);
+    const locator = ${JSON.stringify(normalizeLocatorInput(locatorInput))};
+    const root = resolveRoot(locator);
+    const el = root.querySelector(locator.selector);
+    if (!el) throw new Error('No element matched selector: ' + locator.selector);
     el.scrollIntoView({ block: 'center', inline: 'center' });
     el.click();
-    return { clicked: selector, text: (el.innerText || el.textContent || '').trim() };
+    return { clicked: locator.selector, ref: locator.ref || null, roots: locator.roots || [], text: (el.innerText || el.textContent || '').trim() };
+    ${resolveRootSource()}
   })()`;
 }
 
-export function typeExpression(selector: string, text: string, append: boolean): string {
+export function typeExpression(locatorInput: LocatorInput, text: string, append: boolean): string {
   return `(() => {
-    const selector = ${JSON.stringify(selector)};
+    const locator = ${JSON.stringify(normalizeLocatorInput(locatorInput))};
     const text = ${JSON.stringify(text)};
-    const el = document.querySelector(selector);
-    if (!el) throw new Error('No element matched selector: ' + selector);
+    const root = resolveRoot(locator);
+    const el = root.querySelector(locator.selector);
+    if (!el) throw new Error('No element matched selector: ' + locator.selector);
     el.scrollIntoView({ block: 'center', inline: 'center' });
     el.focus();
     if ('value' in el) {
@@ -92,15 +98,42 @@ export function typeExpression(selector: string, text: string, append: boolean):
       else el.value = text;
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { typed: selector, value: el.value };
+      return { typed: locator.selector, ref: locator.ref || null, roots: locator.roots || [], value: el.value };
     }
     if (el.isContentEditable) {
       if (!${append ? "true" : "false"}) el.textContent = '';
       document.execCommand('insertText', false, text);
-      return { typed: selector, text: el.textContent };
+      return { typed: locator.selector, ref: locator.ref || null, roots: locator.roots || [], text: el.textContent };
     }
-    throw new Error('Element is not text-editable: ' + selector);
+    throw new Error('Element is not text-editable: ' + locator.selector);
+    ${resolveRootSource()}
   })()`;
+}
+
+function normalizeLocatorInput(locatorInput: LocatorInput): Pick<ResolvedRef, "selector" | "roots" | "ref"> {
+  return typeof locatorInput === "string" ? { selector: locatorInput } : locatorInput;
+}
+
+function resolveRootSource(): string {
+  return `
+    function resolveRoot(locator) {
+      let root = document;
+      for (const step of locator.roots || []) {
+        const host = root.querySelector(step.selector);
+        if (!host) throw new Error('No host matched ' + step.kind + ' ref ' + step.ref + ': ' + step.selector);
+        if (step.kind === 'shadow-root') {
+          if (!host.shadowRoot) throw new Error('Host ref ' + step.ref + ' has no open shadowRoot.');
+          root = host.shadowRoot;
+        } else if (step.kind === 'frame') {
+          if (!host.contentDocument) throw new Error('Frame ref ' + step.ref + ' is not same-origin or is unavailable.');
+          root = host.contentDocument;
+        } else {
+          throw new Error('Unsupported root step: ' + step.kind);
+        }
+      }
+      return root;
+    }
+  `;
 }
 
 export async function pressKey(client: CdpClient, key: string): Promise<void> {

@@ -5,6 +5,7 @@ import type { TargetInfo } from "./types.js";
 
 interface RefRecord {
   ref?: string;
+  framePath?: string[];
   selector?: string;
   text?: string;
   tag?: string;
@@ -12,10 +13,18 @@ interface RefRecord {
   attrs?: Record<string, unknown>;
 }
 
+export interface RefRootStep {
+  ref: string;
+  kind: "shadow-root" | "frame";
+  selector: string;
+}
+
 export interface ResolvedRef {
   input: string;
   selector: string;
   ref?: string;
+  framePath?: string[];
+  roots?: RefRootStep[];
   source?: string;
   record?: RefRecord;
 }
@@ -38,10 +47,10 @@ export async function resolveSelectorRef(
   }
 
   const indexed = await findIndexedRef(currentDir, ref);
-  if (indexed?.selector) return indexed;
+  if (indexed?.selector) return withRootSteps(currentDir, indexed);
 
   const dumped = await findDumpRef(currentDir, ref);
-  if (dumped?.selector) return dumped;
+  if (dumped?.selector) return withRootSteps(currentDir, dumped);
 
   throw new Error(`No selector for ${ref} in ${currentDir}. Re-run snapshot to refresh refs.`);
 }
@@ -72,11 +81,26 @@ async function findCurrentSnapshotDir(outDir: string, target: TargetInfo): Promi
 }
 
 async function findIndexedRef(currentDir: string, ref: string): Promise<ResolvedRef | undefined> {
-  for (const file of ["visible-controls.ndjson", "controls.ndjson", "links.ndjson", "dialogs.ndjson", "forms.ndjson"]) {
+  for (const file of [
+    "visible-controls.ndjson",
+    "controls.ndjson",
+    "links.ndjson",
+    "dialogs.ndjson",
+    "forms.ndjson",
+    "frames.ndjson",
+    "nodes.ndjson"
+  ]) {
     const fullPath = path.join(currentDir, file);
     for await (const record of readNdjson<RefRecord>(fullPath)) {
       if (record.ref?.toLowerCase() === ref && record.selector) {
-        return { input: ref, ref, selector: record.selector, source: fullPath, record };
+        return {
+          input: ref,
+          ref,
+          selector: record.selector,
+          framePath: record.framePath,
+          source: fullPath,
+          record
+        };
       }
     }
   }
@@ -91,6 +115,40 @@ async function findDumpRef(currentDir: string, ref: string): Promise<ResolvedRef
   if (!line) return undefined;
   const selector = parseDumpSelector(line);
   return selector ? { input: ref, ref, selector, source: dumpPath } : undefined;
+}
+
+async function withRootSteps(currentDir: string, resolved: ResolvedRef): Promise<ResolvedRef> {
+  const framePath = resolved.framePath ?? resolved.record?.framePath;
+  if (!framePath || framePath.length <= 1) return resolved;
+
+  const refs = await readRefMap(currentDir);
+  const roots: RefRootStep[] = [];
+  for (const part of framePath.slice(1)) {
+    const match = part.match(/^(n\d{6})#(shadow-root|frame)$/i);
+    if (!match) continue;
+    const ref = match[1].toLowerCase();
+    const kind = match[2] as RefRootStep["kind"];
+    const host = refs.get(ref);
+    if (!host?.selector) {
+      throw new Error(`Ref ${resolved.ref} is inside ${part}, but host ${ref} has no selector.`);
+    }
+    roots.push({ ref, kind, selector: host.selector });
+  }
+
+  return { ...resolved, framePath, roots };
+}
+
+async function readRefMap(currentDir: string): Promise<Map<string, RefRecord>> {
+  const refs = new Map<string, RefRecord>();
+  for (const file of ["nodes.ndjson", "frames.ndjson", "controls.ndjson", "links.ndjson", "dialogs.ndjson", "forms.ndjson"]) {
+    const fullPath = path.join(currentDir, file);
+    for await (const record of readNdjson<RefRecord>(fullPath)) {
+      if (record.ref && record.selector && !refs.has(record.ref.toLowerCase())) {
+        refs.set(record.ref.toLowerCase(), record);
+      }
+    }
+  }
+  return refs;
 }
 
 function parseDumpSelector(line: string): string | undefined {

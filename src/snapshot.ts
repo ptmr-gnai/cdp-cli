@@ -139,6 +139,7 @@ const PAGE_STATE_EXPRESSION = `(() => {
 const PAGE_DUMP_EXPRESSION = `(() => {
   const out = {
     tree: [],
+    nodes: [],
     links: [],
     controls: [],
     forms: [],
@@ -283,6 +284,7 @@ const PAGE_DUMP_EXPRESSION = `(() => {
       ].filter(Boolean).join(' ');
       out.tree.push('  '.repeat(depth) + line);
       const record = nodeRecord(el, ref, framePath);
+      out.nodes.push(record);
       if (el.localName === 'a' && el.href) out.links.push({ ...record, href: el.href });
       if (isControl(el)) out.controls.push(record);
       if (isDialog(el)) out.dialogs.push(record);
@@ -383,6 +385,7 @@ export async function writeSnapshot(
   const pageState = stateResult.value as { url?: string; title?: string };
   const pageDump = dumpResult.value as {
     tree?: string[];
+    nodes?: unknown[];
     links?: unknown[];
     controls?: unknown[];
     forms?: unknown[];
@@ -414,6 +417,7 @@ export async function writeSnapshot(
     dump: path.join(dir, "dump.txt"),
     text: path.join(dir, "text.md"),
     dom: path.join(dir, "dom.html"),
+    nodes: path.join(dir, "nodes.ndjson"),
     links: path.join(dir, "links.ndjson"),
     controls: path.join(dir, "controls.ndjson"),
     visibleControls: path.join(dir, "visible-controls.ndjson"),
@@ -429,6 +433,7 @@ export async function writeSnapshot(
   await fs.writeFile(artifacts.dump, `${(pageDump.tree ?? []).join("\n")}\n`, "utf8");
   await fs.writeFile(artifacts.text, String(textResult.value ?? ""), "utf8");
   await fs.writeFile(artifacts.dom, String(htmlResult.value ?? ""), "utf8");
+  await writeNdjson(artifacts.nodes, pageDump.nodes ?? []);
   await writeNdjson(artifacts.links, pageDump.links ?? []);
   await writeNdjson(artifacts.controls, controls);
   await writeNdjson(artifacts.visibleControls, visibleControls);
@@ -518,6 +523,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["dump", "dump.txt"],
     ["text", "text.md"],
     ["dom", "dom.html"],
+    ["nodes", "nodes.ndjson"],
     ["links", "links.ndjson"],
     ["controls", "controls.ndjson"],
     ["visibleControls", "visible-controls.ndjson"],

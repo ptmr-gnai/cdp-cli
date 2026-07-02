@@ -213,7 +213,8 @@ program
   .command("click")
   .description("Click a DOM selector or latest snapshot ref, recording before/after snapshots and diffs.")
   .argument("<selector-or-ref>", "CSS selector or ref like n000017")
-  .action(async (selectorOrRef: string) => {
+  .option("--wait <ms>", "post-click settle timeout", parseIntOption, 1000)
+  .action(async (selectorOrRef: string, commandOptions: { wait: number }) => {
     await runCommand("click", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
@@ -221,8 +222,8 @@ program
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "click",
-          clickExpression(resolved.selector),
-          () => waitForLoad(client, options.timeout)
+          clickExpression(resolved),
+          () => waitForLoad(client, commandOptions.wait)
         );
         return {
           ok: !action.exception,
@@ -252,7 +253,7 @@ program
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "type",
-          typeExpression(resolved.selector, text, Boolean(commandOptions.append))
+          typeExpression(resolved, text, Boolean(commandOptions.append))
         );
         return {
           ok: !action.exception,
@@ -281,7 +282,7 @@ program
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "fill",
-          typeExpression(resolved.selector, text, false)
+          typeExpression(resolved, text, false)
         );
         return {
           ok: !action.exception,

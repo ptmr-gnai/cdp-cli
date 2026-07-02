@@ -76,6 +76,7 @@ cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
 cdp-cli click 'a[href]'
 cdp-cli click n000017
+cdp-cli click n000017 --wait 3000
 cdp-cli type 'input[name="q"]' 'search text'
 cdp-cli fill n000017 'search text'
 cdp-cli press Enter
@@ -121,6 +122,7 @@ Artifacts are written under `.cdp-cli/` by default:
         dump.txt
         text.md
         dom.html
+        nodes.ndjson
         links.ndjson
         controls.ndjson
         visible-controls.ndjson
@@ -149,6 +151,7 @@ The important files for agents are usually:
 - `state.json`: URL, title, viewport, headings, controls, dialogs, active element, and metadata.
 - `dump.txt`: grep-first tree of the page, including selectors, visibility, rects, text nodes, same-origin frames, and open shadow roots.
 - `text.md`: readable page text.
+- `nodes.ndjson`: one structured record for every element in `dump.txt`; action refs use this to traverse shadow roots and same-origin frames.
 - `visible-controls.ndjson`: visible links/buttons/inputs/selectors to try first.
 - `controls.ndjson`, `links.ndjson`, `forms.ndjson`, `dialogs.ndjson`, `frames.ndjson`: fuller structured indexes for fallback inspection.
 - `dom.html`: full HTML for fallback inspection.

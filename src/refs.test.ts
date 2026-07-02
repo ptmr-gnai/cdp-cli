@@ -43,6 +43,31 @@ describe("resolveSelectorRef", () => {
     });
   });
 
+  it("returns root steps for refs inside open shadow roots", async () => {
+    const outDir = await makeOutDir();
+    const current = path.join(outDir, "targets", "example.com-TARGET123", "current");
+    await fs.ensureDir(current);
+    await fs.writeFile(
+      path.join(current, "nodes.ndjson"),
+      [
+        { ref: "n000011", framePath: ["top"], selector: "popup-info", tag: "popup-info" },
+        {
+          ref: "n000016",
+          framePath: ["top", "n000011#shadow-root"],
+          selector: "span > span:nth-of-type(2)",
+          tag: "span",
+          text: "Shadow help"
+        }
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n"
+    );
+
+    await expect(resolveSelectorRef(outDir, target, "n000016")).resolves.toMatchObject({
+      ref: "n000016",
+      selector: "span > span:nth-of-type(2)",
+      roots: [{ ref: "n000011", kind: "shadow-root", selector: "popup-info" }]
+    });
+  });
+
   it("passes non-ref inputs through as selectors", async () => {
     await expect(resolveSelectorRef("/missing", target, "button.primary")).resolves.toEqual({
       input: "button.primary",
