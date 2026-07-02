@@ -191,6 +191,8 @@ cdp-cli --no-screenshot evals readonly-sites \
 
 Use `--keep-open` to leave eval-created tabs open for manual inspection.
 
+Each eval result includes a `quality` object with required artifact presence, useful counts from the files (`dumpLines`, `nodes`, `visibleControls`, `forms`, `dialogs`, `frames`, `openShadowRoots`), and warnings when a snapshot is too thin for an agent to navigate with normal shell tools.
+
 ## Site helpers
 
 Helpers are built in and matched by URL. The initial registry includes:

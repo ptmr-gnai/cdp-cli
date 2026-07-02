@@ -508,7 +508,13 @@ evals
           results,
           summary: {
             ok: results.filter((result) => result.ok).length,
-            failed: results.filter((result) => !result.ok).length
+            failed: results.filter((result) => !result.ok).length,
+            qualityWarnings: results
+              .filter((result) => result.quality?.warnings.length)
+              .map((result) => ({
+                id: result.id,
+                warnings: result.quality?.warnings ?? []
+              }))
           }
         }
       };
