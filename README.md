@@ -27,6 +27,18 @@ Enable remote debugging and accept Chrome's permission dialog. By default the CL
 http://127.0.0.1:9222
 ```
 
+Chrome's live-profile remote debugging flow writes the actual browser WebSocket endpoint to `DevToolsActivePort` in the Chrome user-data directory. The classic `/json/version` and `/json/list` endpoints may return `404` in this mode. `cdp-cli` handles this automatically by reading:
+
+```text
+~/Library/Application Support/Google/Chrome/DevToolsActivePort
+```
+
+Override the location when needed:
+
+```sh
+cdp-cli --user-data-dir "/path/to/Chrome/User Data" status
+```
+
 For older/manual flows, launch Chrome with a non-default profile:
 
 ```sh
@@ -67,13 +79,26 @@ cdp-cli helpers list
 cdp-cli helpers run generic links
 ```
 
+For live-profile Chrome, prefer the persistent daemon:
+
+```sh
+cdp-cli --trace daemon start
+cdp-cli --daemon status
+cdp-cli --daemon open https://example.com
+cdp-cli --daemon snapshot
+cdp-cli daemon stop
+```
+
 Global options:
 
 ```sh
 --browser-url http://127.0.0.1:9222
+--user-data-dir "/path/to/Chrome/User Data"
 --out-dir .cdp-cli
 --target <target-id-title-or-url-fragment>
 --timeout 5000
+--trace
+--daemon
 --no-screenshot
 ```
 
@@ -130,6 +155,39 @@ cdp-cli helpers run x visible-posts --target x.com
 ```
 
 Helper runs are recorded like any other eval: source script, result JSON, before snapshot, after snapshot, and diffs.
+
+## Daemon
+
+Chrome's live-profile remote debugging flow may show an approval dialog when a new client requests browser control. For agent workflows, use the daemon so Chrome only sees one long-lived browser connection:
+
+```sh
+cdp-cli --trace daemon start
+cdp-cli --daemon list
+cdp-cli --daemon eval 'document.title'
+```
+
+The daemon is a local CDP proxy. It reads Chrome's `DevToolsActivePort`, connects once to the browser WebSocket, and exposes classic CDP endpoints on `http://127.0.0.1:9339`:
+
+```text
+/json/version
+/json/list
+/json/new
+/devtools/page/<target-id>
+```
+
+Commands using `--daemon` automatically start or reuse the proxy and then talk to `http://127.0.0.1:9339`. Daemon state is stored at:
+
+```text
+.cdp-cli/daemon.json
+```
+
+Trace logs are JSONL files under:
+
+```text
+.cdp-cli/logs/
+```
+
+Useful events include `active_port.read.*`, `daemon.browser.connect.*`, `daemon.http.request`, `daemon.target.attach`, and `daemon.target.detach`.
 
 ## Notes for live Chrome
 

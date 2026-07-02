@@ -9,6 +9,7 @@ export type JsonValue =
 export interface CliGlobalOptions {
   browserUrl: string;
   outDir: string;
+  userDataDir?: string;
   target?: string;
   timeout: number;
   screenshot: boolean;
@@ -45,6 +46,8 @@ export interface TargetInfo {
   title: string;
   url: string;
   webSocketDebuggerUrl?: string;
+  connectionMode?: "http-json" | "active-port";
+  browserWebSocketDebuggerUrl?: string;
 }
 
 export interface SnapshotMeta {

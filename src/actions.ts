@@ -1,12 +1,11 @@
 import path from "node:path";
 import fs from "fs-extra";
-import type CDP from "chrome-remote-interface";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { nowStamp, sanitizeFilePart } from "./env.js";
 import { findHelperCommand, helperSummaries } from "./helpers.js";
 import type { ArtifactMap, SnapshotResult, TargetInfo } from "./types.js";
 
-type CdpClient = Awaited<ReturnType<typeof CDP>>;
+type CdpClient = any;
 
 export interface ActionContext {
   client: CdpClient;

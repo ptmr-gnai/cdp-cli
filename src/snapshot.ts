@@ -1,12 +1,11 @@
 import path from "node:path";
 import fs from "fs-extra";
 import { createPatch } from "diff";
-import type CDP from "chrome-remote-interface";
 import { nowStamp, sanitizeFilePart } from "./env.js";
 import { helperSummaries } from "./helpers.js";
 import type { ArtifactMap, SnapshotResult, TargetInfo } from "./types.js";
 
-type CdpClient = Awaited<ReturnType<typeof CDP>>;
+type CdpClient = any;
 
 interface RuntimeEvalResult {
   result?: {

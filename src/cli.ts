@@ -2,10 +2,12 @@
 import fs from "fs-extra";
 import { Command } from "commander";
 import { closeClient, connectTarget, createTarget, getBrowserStatus, listTargets, waitForLoad } from "./cdp.js";
-import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, resolveOutDir } from "./env.js";
+import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, defaultChromeUserDataDir, resolveOutDir } from "./env.js";
 import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, typeExpression } from "./actions.js";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
+import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
 import { errorEnvelope, printEnvelope, targetActions } from "./output.js";
+import { configureTrace } from "./trace.js";
 import type { CliGlobalOptions, JsonEnvelope } from "./types.js";
 
 const program = new Command();
@@ -15,8 +17,11 @@ program
   .description("Agent-first Chrome DevTools Protocol CLI with filesystem snapshots.")
   .option("-b, --browser-url <url>", "CDP browser URL", process.env.CDP_BROWSER_URL ?? DEFAULT_BROWSER_URL)
   .option("-o, --out-dir <dir>", "artifact output directory", process.env.CDP_OUT_DIR ?? DEFAULT_OUT_DIR)
+  .option("--user-data-dir <dir>", "Chrome user-data-dir for active-profile DevToolsActivePort discovery", process.env.CDP_USER_DATA_DIR ?? defaultChromeUserDataDir())
   .option("-t, --target <id-or-text>", "target id, title substring, or URL substring")
   .option("--timeout <ms>", "navigation/load timeout", parseIntOption, 5000)
+  .option("--trace", "write JSONL instrumentation to <out-dir>/logs", process.env.CDP_TRACE === "1")
+  .option("--daemon", "use or start the persistent cdp-cli daemon", process.env.CDP_DAEMON === "1")
   .option("--no-screenshot", "skip screenshot capture artifacts")
   .showHelpAfterError();
 
@@ -25,7 +30,7 @@ program
   .description("Check the Chrome CDP endpoint and list page targets.")
   .action(async () => {
     await runCommand("status", async (options) => {
-      const status = await getBrowserStatus(options.browserUrl);
+      const status = await getBrowserStatus(options.browserUrl, options.userDataDir);
       return {
         ok: true,
         command: "status",
@@ -43,7 +48,7 @@ program
   .description("List attachable page targets.")
   .action(async () => {
     await runCommand("list", async (options) => {
-      const targets = await listTargets(options.browserUrl);
+      const targets = await listTargets(options.browserUrl, options.userDataDir);
       return {
         ok: true,
         command: "list",
@@ -63,8 +68,8 @@ program
   .argument("<url>", "URL to open")
   .action(async (url: string) => {
     await runCommand("open", async (options) => {
-      const target = await createTarget(options.browserUrl, url);
-      const { client } = await connectTarget(options.browserUrl, target.id);
+      const target = await createTarget(options.browserUrl, url, options.userDataDir);
+      const { client } = await connectTarget(options.browserUrl, target.id, options.userDataDir);
       try {
         await waitForLoad(client, options.timeout);
         const snapshot = await writeSnapshot(client, {
@@ -94,7 +99,7 @@ program
   .argument("[label]", "snapshot label", "manual")
   .action(async (label: string) => {
     await runCommand("snapshot", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const snapshot = await writeSnapshot(client, {
           outDir: options.outDir,
@@ -124,7 +129,7 @@ program
   .action(async (script: string | undefined, commandOptions: { file?: string }) => {
     await runCommand("eval", async (options) => {
       const expression = await readScript(script, commandOptions.file);
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
@@ -151,7 +156,7 @@ program
   .argument("<selector>", "CSS selector")
   .action(async (selector: string) => {
     await runCommand("click", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
@@ -181,7 +186,7 @@ program
   .option("--append", "append instead of replacing")
   .action(async (selector: string, text: string, commandOptions: { append?: boolean }) => {
     await runCommand("type", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
@@ -208,7 +213,7 @@ program
   .argument("<key>", "CDP key value, for example Enter, Escape, Tab")
   .action(async (key: string) => {
     await runCommand("press", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const before = await writeSnapshot(client, {
           outDir: options.outDir,
@@ -244,7 +249,7 @@ helpers
   .description("List helpers available for the current page.")
   .action(async () => {
     await runCommand("helpers", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const urlResult = await evaluateExpression(client, "location.href");
         const url = String(urlResult.value ?? target.url);
@@ -261,6 +266,84 @@ helpers
     });
   });
 
+const daemon = program.command("daemon").description("Manage the persistent cdp-cli CDP proxy daemon.");
+
+daemon
+  .command("start")
+  .description("Start the daemon and print its connection details.")
+  .option("--port <port>", "daemon listen port", parseIntOption, 9339)
+  .action(async (commandOptions: { port: number }) => {
+    await runCommand("daemon start", async (options) => {
+      const state = await startDaemon({
+        outDir: options.outDir,
+        browserUrl: options.browserUrl,
+        userDataDir: options.userDataDir,
+        port: commandOptions.port
+      });
+      return {
+        ok: true,
+        command: "daemon start",
+        data: state,
+        actions: [
+          {
+            rel: "use-daemon",
+            command: `cdp-cli --daemon status`,
+            description: "Run commands through the persistent daemon."
+          }
+        ]
+      };
+    });
+  });
+
+daemon
+  .command("status")
+  .description("Show daemon state if it is running.")
+  .action(async () => {
+    await runCommand("daemon status", async (options) => {
+      const state = await readDaemonState(options.outDir);
+      return {
+        ok: Boolean(state),
+        command: "daemon status",
+        data: { running: Boolean(state), state: state ?? null }
+      };
+    });
+  });
+
+daemon
+  .command("stop")
+  .description("Stop the daemon.")
+  .action(async () => {
+    await runCommand("daemon stop", async (options) => {
+      const stopped = await stopDaemon(options.outDir);
+      return {
+        ok: true,
+        command: "daemon stop",
+        data: { stopped }
+      };
+    });
+  });
+
+daemon
+  .command("serve")
+  .description("Internal foreground daemon entrypoint.")
+  .option("--port <port>", "daemon listen port", parseIntOption, 9339)
+  .action(async (commandOptions: { port: number }) => {
+    const raw = program.opts<{
+      browserUrl: string;
+      outDir: string;
+      userDataDir?: string;
+      trace: boolean;
+    }>();
+    const outDir = resolveOutDir(raw.outDir);
+    configureTrace(outDir, raw.trace);
+    await serveDaemon({
+      outDir,
+      browserUrl: raw.browserUrl,
+      userDataDir: raw.userDataDir || undefined,
+      port: commandOptions.port
+    });
+  });
+
 helpers
   .command("run")
   .description("Run a helper command, recording before/after snapshots and diffs.")
@@ -268,7 +351,7 @@ helpers
   .argument("<commandName>", "helper command name")
   .action(async (helperId: string, commandName: string) => {
     await runCommand("helpers run", async (options) => {
-      const { client, target } = await connectTarget(options.browserUrl, options.target);
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
         const urlResult = await evaluateExpression(client, "location.href");
         const url = String(urlResult.value ?? target.url);
@@ -299,18 +382,39 @@ async function runCommand(
   const raw = program.opts<{
     browserUrl: string;
     outDir: string;
+    userDataDir?: string;
     target?: string;
     timeout: number;
+    trace: boolean;
+    daemon: boolean;
     screenshot: boolean;
   }>();
 
+  let browserUrl = raw.browserUrl;
+  let userDataDir = raw.userDataDir;
+  if (raw.daemon && !command.startsWith("daemon")) {
+    const daemonDir = resolveOutDir(DEFAULT_OUT_DIR);
+    const state =
+      (await readDaemonState(daemonDir)) ??
+      (await startDaemon({
+        outDir: daemonDir,
+        browserUrl: raw.browserUrl,
+        userDataDir: raw.userDataDir,
+        port: 9339
+      }));
+    browserUrl = state.browserUrl;
+    userDataDir = undefined;
+  }
+
   const options: CliGlobalOptions = {
-    browserUrl: raw.browserUrl,
+    browserUrl,
     outDir: resolveOutDir(raw.outDir),
+    userDataDir,
     target: raw.target,
     timeout: raw.timeout,
     screenshot: raw.screenshot
   };
+  configureTrace(options.outDir, raw.trace);
 
   try {
     await fs.ensureDir(options.outDir);
