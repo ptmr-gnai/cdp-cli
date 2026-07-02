@@ -16,7 +16,7 @@ import { DEFAULT_BROWSER_URL, DEFAULT_OUT_DIR, defaultChromeUserDataDir, resolve
 import { clickExpression, helpersForUrl, pressKey, runHelper, runRecordedEvaluation, sleep, typeExpression } from "./actions.js";
 import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
-import { parseEvalSites, runReadOnlyEvalSites } from "./evalSites.js";
+import { parseEvalSites, runReadOnlyEvalSites, summarizeEvalSiteResults } from "./evalSites.js";
 import { errorEnvelope, printEnvelope, targetActions } from "./output.js";
 import { resolveSelectorRef } from "./refs.js";
 import { configureTrace } from "./trace.js";
@@ -627,22 +627,14 @@ evals
     await runCommand("evals readonly-sites", async (options) => {
       const sites = parseEvalSites(commandOptions.site);
       const results = await runReadOnlyEvalSites(options, sites, { closeTargets: !commandOptions.keepOpen });
+      const summary = summarizeEvalSiteResults(results);
       return {
         ok: results.every((result) => result.ok),
         command: "evals readonly-sites",
         data: {
           sites,
           results,
-          summary: {
-            ok: results.filter((result) => result.ok).length,
-            failed: results.filter((result) => !result.ok).length,
-            qualityWarnings: results
-              .filter((result) => result.quality?.warnings.length)
-              .map((result) => ({
-                id: result.id,
-                warnings: result.quality?.warnings ?? []
-              }))
-          }
+          summary
         }
       };
     });

@@ -31,6 +31,7 @@ export interface EvalSiteRunOptions {
 export interface EvalSiteQuality {
   ok: boolean;
   requiredFiles: Record<string, boolean>;
+  dumpSections: Record<string, boolean>;
   counts: {
     dumpLines: number;
     textLines: number;
@@ -43,7 +44,20 @@ export interface EvalSiteQuality {
     frames: number;
     openShadowRoots: number;
   };
+  suggestedSearches: string[];
   warnings: string[];
+}
+
+export interface EvalSiteSummaryRow {
+  id: string;
+  ok: boolean;
+  url: string;
+  snapshotDir?: string;
+  counts?: EvalSiteQuality["counts"];
+  dumpSections?: Record<string, boolean>;
+  warnings: string[];
+  suggestedSearches: string[];
+  error?: string;
 }
 
 export const DEFAULT_EVAL_SITES: EvalSite[] = [
@@ -129,6 +143,51 @@ export function parseEvalSites(values: string[] | undefined): EvalSite[] {
   });
 }
 
+export function summarizeEvalSiteResults(results: EvalSiteResult[]): {
+  ok: number;
+  failed: number;
+  matrix: EvalSiteSummaryRow[];
+  qualityWarnings: Array<{ id: string; warnings: string[] }>;
+  failedRequiredFiles: Array<{ id: string; files: string[] }>;
+  failedDumpSections: Array<{ id: string; sections: string[] }>;
+} {
+  const matrix = results.map((result): EvalSiteSummaryRow => ({
+    id: result.id,
+    ok: result.ok,
+    url: result.url,
+    snapshotDir: result.snapshotDir,
+    counts: result.quality?.counts,
+    dumpSections: result.quality?.dumpSections,
+    warnings: result.quality?.warnings ?? (result.error ? [result.error] : []),
+    suggestedSearches: result.quality?.suggestedSearches ?? [],
+    error: result.error
+  }));
+  return {
+    ok: results.filter((result) => result.ok).length,
+    failed: results.filter((result) => !result.ok).length,
+    matrix,
+    qualityWarnings: matrix
+      .filter((row) => row.warnings.length)
+      .map((row) => ({ id: row.id, warnings: row.warnings })),
+    failedRequiredFiles: results
+      .map((result) => ({
+        id: result.id,
+        files: Object.entries(result.quality?.requiredFiles ?? {})
+          .filter(([, present]) => !present)
+          .map(([file]) => file)
+      }))
+      .filter((row) => row.files.length),
+    failedDumpSections: results
+      .map((result) => ({
+        id: result.id,
+        sections: Object.entries(result.quality?.dumpSections ?? {})
+          .filter(([, present]) => !present)
+          .map(([section]) => section)
+      }))
+      .filter((row) => row.sections.length)
+  };
+}
+
 async function artifactSizes(artifacts: ArtifactMap): Promise<Record<string, number>> {
   const sizes: Record<string, number> = {};
   for (const [name, file] of Object.entries(artifacts)) {
@@ -144,6 +203,7 @@ async function artifactSizes(artifacts: ArtifactMap): Promise<Record<string, num
 
 export async function evaluateSnapshotQuality(snapshotDir: string): Promise<EvalSiteQuality> {
   const requiredFiles = await requiredFilePresence(snapshotDir);
+  const dumpSections = await dumpSectionPresence(path.join(snapshotDir, "dump.txt"));
   const counts = {
     dumpLines: await countLines(path.join(snapshotDir, "dump.txt")),
     textLines: await countLines(path.join(snapshotDir, "text.md")),
@@ -156,11 +216,17 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     frames: await countNdjson(path.join(snapshotDir, "frames.ndjson")),
     openShadowRoots: await countPattern(path.join(snapshotDir, "dump.txt"), "#shadow-root(open)")
   };
-  const warnings = qualityWarnings(requiredFiles, counts);
+  const warnings = qualityWarnings(requiredFiles, dumpSections, counts);
   return {
     ok: warnings.length === 0,
     requiredFiles,
+    dumpSections,
     counts,
+    suggestedSearches: [
+      `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME)' '${snapshotDir}/dump.txt'`,
+      `rg '#shadow-root|#frame|path="top >' '${snapshotDir}/dump.txt'`,
+      `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' '${snapshotDir}/dump.txt'`
+    ],
     warnings
   };
 }
@@ -195,10 +261,37 @@ async function requiredFilePresence(snapshotDir: string): Promise<Record<string,
   return Object.fromEntries(entries);
 }
 
-function qualityWarnings(requiredFiles: Record<string, boolean>, counts: EvalSiteQuality["counts"]): string[] {
+async function dumpSectionPresence(dumpPath: string): Promise<Record<string, boolean>> {
+  let text = "";
+  try {
+    text = await fs.readFile(dumpPath, "utf8");
+  } catch {
+    // Missing dump.txt is reported by required file checks.
+  }
+  return {
+    page: /^PAGE /m.test(text),
+    counts: /^COUNTS /m.test(text),
+    helpers: /^HELPERS /m.test(text),
+    suggestedGrep: /^# suggested-grep$/m.test(text),
+    visibleControls: /^# visible-controls$/m.test(text),
+    forms: /^# forms$/m.test(text),
+    dialogs: /^# dialogs$/m.test(text),
+    frames: /^# frames$/m.test(text),
+    tree: /^# tree$/m.test(text)
+  };
+}
+
+function qualityWarnings(
+  requiredFiles: Record<string, boolean>,
+  dumpSections: Record<string, boolean>,
+  counts: EvalSiteQuality["counts"]
+): string[] {
   const warnings: string[] = [];
   for (const [file, present] of Object.entries(requiredFiles)) {
     if (!present) warnings.push(`missing required artifact: ${file}`);
+  }
+  for (const [section, present] of Object.entries(dumpSections)) {
+    if (!present) warnings.push(`dump.txt missing section: ${section}`);
   }
   if (counts.dumpLines < 5) warnings.push(`dump.txt is too small: ${counts.dumpLines} lines`);
   if (counts.nodes < 1) warnings.push("nodes.ndjson has no records");
