@@ -87,18 +87,30 @@ describe("buildDumpText", () => {
       ],
       frames: [
         { ref: "n000006", tag: "iframe", selector: "iframe", visible: true, src: "https://example.com/frame", sameOrigin: false }
+      ],
+      resources: [
+        {
+          name: "https://example.com/app.js",
+          initiatorType: "script",
+          duration: 42,
+          transferSize: 1024,
+          encodedBodySize: 900,
+          decodedBodySize: 1800,
+          renderBlockingStatus: "non-blocking"
+        }
       ]
     }, helpers, accessibilityText);
 
     expect(dump).toContain("# cdp-cli dump v1");
     expect(dump).toContain("PAGE title=\"Example Login\"");
-    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 openShadowRoots=1");
+    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 openShadowRoots=1");
     expect(dump).toContain("HELPERS generic.links generic.forms");
     expect(dump).toContain("CONTROL [n000003] path=\"top > n000002#shadow-root\" <button>");
     expect(dump).toContain("FORM [n000004] <form>");
     expect(dump).toContain("controls=\"input:name=\\\"email\\\":type=\\\"email\\\":placeholder=\\\"Email\\\" button:text=\\\"Sign in\\\"\"");
     expect(dump).toContain("DIALOG [n000005] <dialog>");
     expect(dump).toContain("FRAME [n000006] <iframe>");
+    expect(dump).toContain("RESOURCE type=\"script\" url=\"https://example.com/app.js\" durationMs=42 transfer=1024 encoded=900 decoded=1800 renderBlocking=\"non-blocking\"");
     expect(dump).toContain("# accessibility\n# cdp-cli accessibility v1");
     expect(dump).toContain("A11Y [2] role=\"button\" name=\"Continue\"");
     expect(dump).toContain("# tree\n[n000001] <html>");

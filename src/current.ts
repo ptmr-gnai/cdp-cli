@@ -72,6 +72,7 @@ const IMPORTANT_FILES = [
   "forms.ndjson",
   "dialogs.ndjson",
   "frames.ndjson",
+  "resources.ndjson",
   "nodes.ndjson",
   "state.json",
   "text.md",
@@ -88,7 +89,8 @@ const COUNT_FILES: Record<string, string> = {
   links: "links.ndjson",
   forms: "forms.ndjson",
   dialogs: "dialogs.ndjson",
-  frames: "frames.ndjson"
+  frames: "frames.ndjson",
+  resources: "resources.ndjson"
 };
 
 export async function readCurrentSnapshotSummary(outDir: string, target: TargetInfo): Promise<CurrentSnapshotSummary> {

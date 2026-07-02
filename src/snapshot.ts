@@ -57,6 +57,16 @@ interface PageDumpRecord {
   placeholder?: string | null;
 }
 
+interface PageResourceRecord {
+  name?: string;
+  initiatorType?: string;
+  duration?: number;
+  transferSize?: number;
+  encodedBodySize?: number;
+  decodedBodySize?: number;
+  renderBlockingStatus?: string;
+}
+
 interface PageDump {
   tree?: string[];
   nodes?: PageDumpRecord[];
@@ -65,6 +75,7 @@ interface PageDump {
   forms?: PageDumpRecord[];
   dialogs?: PageDumpRecord[];
   frames?: PageDumpRecord[];
+  resources?: PageResourceRecord[];
 }
 
 interface AxTree {
@@ -194,7 +205,8 @@ const PAGE_DUMP_EXPRESSION = `(() => {
     controls: [],
     forms: [],
     dialogs: [],
-    frames: []
+    frames: [],
+    resources: []
   };
   let seq = 0;
   const seen = new WeakSet();
@@ -305,6 +317,23 @@ const PAGE_DUMP_EXPRESSION = `(() => {
   });
   const isControl = (el) => el.matches?.('a[href], button, input, textarea, select, option, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [contenteditable="true"]');
   const isDialog = (el) => el.matches?.('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"], [popover]');
+  const resourcesOf = () => {
+    try {
+      return performance.getEntriesByType('resource')
+        .map((entry) => ({
+          name: entry.name,
+          initiatorType: entry.initiatorType || '',
+          duration: Math.round(entry.duration),
+          transferSize: Number(entry.transferSize || 0),
+          encodedBodySize: Number(entry.encodedBodySize || 0),
+          decodedBodySize: Number(entry.decodedBodySize || 0),
+          renderBlockingStatus: entry.renderBlockingStatus || ''
+        }))
+        .slice(-500);
+    } catch {
+      return [];
+    }
+  };
   const walk = (root, depth, framePath) => {
     if (!root || seen.has(root)) return;
     seen.add(root);
@@ -376,6 +405,7 @@ const PAGE_DUMP_EXPRESSION = `(() => {
     }
   };
   walk(document, 0, ['top']);
+  out.resources = resourcesOf();
   return out;
 })()`;
 
@@ -426,6 +456,7 @@ export function buildDumpText(
   const forms = pageDump.forms ?? [];
   const dialogs = pageDump.dialogs ?? [];
   const frames = pageDump.frames ?? [];
+  const resources = pageDump.resources ?? [];
   const nodes = pageDump.nodes ?? [];
   const links = pageDump.links ?? [];
   const helperCommands = helpers.flatMap((helper) =>
@@ -436,11 +467,11 @@ export function buildDumpText(
   const lines = [
     "# cdp-cli dump v1",
     `PAGE title=${quote(meta.title)} url=${quote(meta.url)} target=${quote(meta.targetId)} snapshot=${quote(meta.id)}`,
-    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} openShadowRoots=${openShadowRoots}`,
+    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} resources=${resources.length} openShadowRoots=${openShadowRoots}`,
     `HELPERS ${helperCommands.length ? helperCommands.join(" ") : "none"}`,
     "",
     "# suggested-grep",
-    "rg 'CONTROL|FORM|DIALOG|FRAME|A11Y|#shadow-root|selector=' dump.txt",
+    "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|A11Y|#shadow-root|selector=' dump.txt",
     "rg 'Search|Login|Submit|Continue|Next|button|input|dialog' dump.txt",
     "",
     "# visible-controls"
@@ -477,6 +508,11 @@ export function buildDumpText(
   if (frames.length > 40) lines.push(`FRAME_MORE hidden=${frames.length - 40}`);
   if (frames.length === 0) lines.push("FRAME none");
 
+  lines.push("", "# resources");
+  lines.push(...resources.slice(0, 120).map((record) => `RESOURCE ${resourceLine(record)}`));
+  if (resources.length > 120) lines.push(`RESOURCE_MORE hidden=${resources.length - 120}`);
+  if (resources.length === 0) lines.push("RESOURCE none");
+
   lines.push("", "# accessibility");
   if (accessibilityText?.trim()) {
     lines.push(...accessibilityText.trimEnd().split("\n"));
@@ -486,6 +522,18 @@ export function buildDumpText(
 
   lines.push("", "# tree", ...tree);
   return `${lines.join("\n")}\n`;
+}
+
+function resourceLine(record: PageResourceRecord): string {
+  return [
+    record.initiatorType ? `type=${quote(record.initiatorType)}` : "",
+    record.name ? `url=${quote(record.name)}` : "",
+    record.duration !== undefined ? `durationMs=${record.duration}` : "",
+    record.transferSize !== undefined ? `transfer=${record.transferSize}` : "",
+    record.encodedBodySize !== undefined ? `encoded=${record.encodedBodySize}` : "",
+    record.decodedBodySize !== undefined ? `decoded=${record.decodedBodySize}` : "",
+    record.renderBlockingStatus ? `renderBlocking=${quote(record.renderBlockingStatus)}` : ""
+  ].filter(Boolean).join(" ");
 }
 
 export function buildAccessibilityText(axTree: AxTree): string {
@@ -607,6 +655,7 @@ export async function writeSnapshot(
     forms: path.join(dir, "forms.ndjson"),
     dialogs: path.join(dir, "dialogs.ndjson"),
     frames: path.join(dir, "frames.ndjson"),
+    resources: path.join(dir, "resources.ndjson"),
     helpers: path.join(dir, "helpers.json")
   };
 
@@ -622,6 +671,7 @@ export async function writeSnapshot(
   await writeNdjson(artifacts.forms, pageDump.forms ?? []);
   await writeNdjson(artifacts.dialogs, pageDump.dialogs ?? []);
   await writeNdjson(artifacts.frames, pageDump.frames ?? []);
+  await writeNdjson(artifacts.resources, pageDump.resources ?? []);
   await fs.writeJson(artifacts.helpers, helpers, { spaces: 2 });
 
   let accessibilityText: string | undefined;
@@ -718,6 +768,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["forms", "forms.ndjson"],
     ["dialogs", "dialogs.ndjson"],
     ["frames", "frames.ndjson"],
+    ["resources", "resources.ndjson"],
     ["accessibilityText", "accessibility.txt"],
     ["helpers", "helpers.json"]
   ] as const;

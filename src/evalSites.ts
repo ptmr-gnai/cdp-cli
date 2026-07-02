@@ -43,6 +43,7 @@ export interface EvalSiteQuality {
     forms: number;
     dialogs: number;
     frames: number;
+    resources: number;
     openShadowRoots: number;
   };
   suggestedSearches: string[];
@@ -216,6 +217,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     forms: await countNdjson(path.join(snapshotDir, "forms.ndjson")),
     dialogs: await countNdjson(path.join(snapshotDir, "dialogs.ndjson")),
     frames: await countNdjson(path.join(snapshotDir, "frames.ndjson")),
+    resources: await countNdjson(path.join(snapshotDir, "resources.ndjson")),
     openShadowRoots: await countPattern(path.join(snapshotDir, "dump.txt"), "#shadow-root(open)")
   };
   const warnings = qualityWarnings(requiredFiles, dumpSections, counts);
@@ -225,7 +227,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     dumpSections,
     counts,
     suggestedSearches: [
-      `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME|A11Y)' '${snapshotDir}/dump.txt' '${snapshotDir}/accessibility.txt'`,
+      `rg '^(PAGE|COUNTS|HELPERS|CONTROL|FORM|DIALOG|FRAME|RESOURCE|A11Y)' '${snapshotDir}/dump.txt' '${snapshotDir}/accessibility.txt'`,
       `rg '#shadow-root|#frame|path="top >' '${snapshotDir}/dump.txt'`,
       `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' '${snapshotDir}/dump.txt'`
     ],
@@ -247,6 +249,7 @@ async function requiredFilePresence(snapshotDir: string): Promise<Record<string,
     "forms.ndjson",
     "dialogs.ndjson",
     "frames.ndjson",
+    "resources.ndjson",
     "accessibility.json",
     "accessibility.txt",
     "dom-snapshot.json",
@@ -280,6 +283,7 @@ async function dumpSectionPresence(dumpPath: string): Promise<Record<string, boo
     forms: /^# forms$/m.test(text),
     dialogs: /^# dialogs$/m.test(text),
     frames: /^# frames$/m.test(text),
+    resources: /^# resources$/m.test(text),
     accessibility: /^# accessibility$/m.test(text),
     tree: /^# tree$/m.test(text)
   };

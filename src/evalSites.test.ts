@@ -11,11 +11,11 @@ describe("evaluateSnapshotQuality", () => {
     await fs.writeFile(path.join(dir, "dump.txt"), [
       "# cdp-cli dump v1",
       "PAGE title=\"Example\" url=\"https://example.com\" target=\"TARGET123\" snapshot=\"snap1\"",
-      "COUNTS nodes=2 controls=1 visibleControls=1 links=0 forms=0 dialogs=0 frames=0 openShadowRoots=1",
+      "COUNTS nodes=2 controls=1 visibleControls=1 links=0 forms=0 dialogs=0 frames=0 resources=1 openShadowRoots=1",
       "HELPERS generic.links generic.forms",
       "",
       "# suggested-grep",
-      "rg 'CONTROL|FORM|DIALOG|FRAME|A11Y|#shadow-root|selector=' dump.txt",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|A11Y|#shadow-root|selector=' dump.txt",
       "",
       "# visible-controls",
       "CONTROL [n000003] path=\"top\" <button> selector=\"button\" visible=true text=\"Go\"",
@@ -28,6 +28,9 @@ describe("evaluateSnapshotQuality", () => {
       "",
       "# frames",
       "FRAME none",
+      "",
+      "# resources",
+      "RESOURCE type=\"script\" url=\"https://example.com/app.js\" durationMs=12 transfer=512 encoded=400 decoded=800",
       "",
       "# accessibility",
       "# cdp-cli accessibility v1",
@@ -54,16 +57,18 @@ describe("evaluateSnapshotQuality", () => {
     await writeNdjson(path.join(dir, "forms.ndjson"), []);
     await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
     await writeNdjson(path.join(dir, "frames.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), [{ name: "https://example.com/app.js", initiatorType: "script" }]);
 
     await expect(evaluateSnapshotQuality(dir)).resolves.toMatchObject({
       ok: true,
       counts: {
-        dumpLines: 31,
+        dumpLines: 34,
         accessibilityLines: 3,
         textLines: 2,
         nodes: 2,
         controls: 1,
         visibleControls: 1,
+        resources: 1,
         openShadowRoots: 1
       },
       dumpSections: {
@@ -71,6 +76,7 @@ describe("evaluateSnapshotQuality", () => {
         counts: true,
         helpers: true,
         suggestedGrep: true,
+        resources: true,
         accessibility: true,
         tree: true
       },
@@ -116,6 +122,7 @@ describe("evaluateSnapshotQuality", () => {
             forms: 1,
             dialogs: 0,
             frames: 0,
+            resources: 1,
             openShadowRoots: 0
           },
           suggestedSearches: ["rg CONTROL /tmp/snap/dump.txt"],
@@ -141,6 +148,7 @@ describe("evaluateSnapshotQuality", () => {
             forms: 0,
             dialogs: 0,
             frames: 0,
+            resources: 0,
             openShadowRoots: 0
           },
           suggestedSearches: [],
@@ -174,6 +182,7 @@ async function writeRequiredArtifacts(dir: string): Promise<void> {
     fs.writeFile(path.join(dir, "dom.html"), "<html></html>"),
     fs.writeJson(path.join(dir, "accessibility.json"), {}),
     fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\n"),
+    fs.writeFile(path.join(dir, "resources.ndjson"), ""),
     fs.writeJson(path.join(dir, "dom-snapshot.json"), {}),
     fs.writeJson(path.join(dir, "helpers.json"), [])
   ]);
