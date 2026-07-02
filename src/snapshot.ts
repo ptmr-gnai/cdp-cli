@@ -68,6 +68,21 @@ interface PageResourceRecord {
   renderBlockingStatus?: string;
 }
 
+interface PageScriptRecord {
+  selector?: string | null;
+  src?: string;
+  type?: string;
+  async?: boolean;
+  defer?: boolean;
+  noModule?: boolean;
+  crossOrigin?: string | null;
+  integrity?: string | null;
+  inline?: boolean;
+  inlineChars?: number;
+  inlineHash?: string;
+  inlineSnippet?: string;
+}
+
 interface PageDump {
   tree?: string[];
   nodes?: PageDumpRecord[];
@@ -77,6 +92,7 @@ interface PageDump {
   dialogs?: PageDumpRecord[];
   frames?: PageDumpRecord[];
   resources?: PageResourceRecord[];
+  scripts?: PageScriptRecord[];
 }
 
 interface AxTree {
@@ -207,7 +223,8 @@ const PAGE_DUMP_EXPRESSION = `(() => {
     forms: [],
     dialogs: [],
     frames: [],
-    resources: []
+    resources: [],
+    scripts: []
   };
   let seq = 0;
   const seen = new WeakSet();
@@ -355,6 +372,31 @@ const PAGE_DUMP_EXPRESSION = `(() => {
       return [];
     }
   };
+  const hashText = (text) => {
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+    }
+    return Math.abs(hash).toString(16);
+  };
+  const scriptsOf = () => [...document.querySelectorAll('script')]
+    .map((el) => {
+      const text = el.src ? '' : (el.textContent || '');
+      return {
+        selector: cssPath(el),
+        src: el.src || '',
+        type: el.getAttribute('type') || '',
+        async: el.async,
+        defer: el.defer,
+        noModule: el.noModule,
+        crossOrigin: el.getAttribute('crossorigin'),
+        integrity: el.getAttribute('integrity'),
+        inline: !el.src,
+        inlineChars: text.length,
+        inlineHash: text ? hashText(text) : '',
+        inlineSnippet: text ? clip(text, 180) : ''
+      };
+    });
   const walk = (root, depth, framePath) => {
     if (!root || seen.has(root)) return;
     seen.add(root);
@@ -428,6 +470,7 @@ const PAGE_DUMP_EXPRESSION = `(() => {
   };
   walk(document, 0, ['top']);
   out.resources = resourcesOf();
+  out.scripts = scriptsOf();
   return out;
 })()`;
 
@@ -479,6 +522,7 @@ export function buildDumpText(
   const dialogs = pageDump.dialogs ?? [];
   const frames = pageDump.frames ?? [];
   const resources = pageDump.resources ?? [];
+  const scripts = pageDump.scripts ?? [];
   const nodes = pageDump.nodes ?? [];
   const links = pageDump.links ?? [];
   const helperCommands = helpers.flatMap((helper) =>
@@ -489,11 +533,11 @@ export function buildDumpText(
   const lines = [
     "# cdp-cli dump v1",
     `PAGE title=${quote(meta.title)} url=${quote(meta.url)} target=${quote(meta.targetId)} snapshot=${quote(meta.id)}`,
-    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} resources=${resources.length} openShadowRoots=${openShadowRoots}`,
+    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} resources=${resources.length} scripts=${scripts.length} openShadowRoots=${openShadowRoots}`,
     `HELPERS ${helperCommands.length ? helperCommands.join(" ") : "none"}`,
     "",
     "# suggested-grep",
-    "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|A11Y|#shadow-root|selector=' dump.txt",
+    "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
     "rg 'Search|Login|Submit|Continue|Next|button|input|dialog' dump.txt",
     "",
     "# visible-controls"
@@ -536,6 +580,11 @@ export function buildDumpText(
   if (resources.length > 120) lines.push(`RESOURCE_MORE hidden=${resources.length - 120}`);
   if (resources.length === 0) lines.push("RESOURCE none");
 
+  lines.push("", "# scripts");
+  lines.push(...scripts.slice(0, 120).map((record) => `SCRIPT ${scriptLine(record)}`));
+  if (scripts.length > 120) lines.push(`SCRIPT_MORE hidden=${scripts.length - 120}`);
+  if (scripts.length === 0) lines.push("SCRIPT none");
+
   lines.push("", "# accessibility");
   if (accessibilityText?.trim()) {
     lines.push(...accessibilityText.trimEnd().split("\n"));
@@ -545,6 +594,23 @@ export function buildDumpText(
 
   lines.push("", "# tree", ...tree);
   return `${lines.join("\n")}\n`;
+}
+
+function scriptLine(record: PageScriptRecord): string {
+  return [
+    record.inline ? "inline=true" : "inline=false",
+    record.src ? `src=${quote(record.src)}` : "",
+    record.selector ? `selector=${quote(record.selector)}` : "",
+    record.type ? `type=${quote(record.type)}` : "",
+    record.async ? "async=true" : "",
+    record.defer ? "defer=true" : "",
+    record.noModule ? "nomodule=true" : "",
+    record.crossOrigin ? `crossorigin=${quote(record.crossOrigin)}` : "",
+    record.integrity ? `integrity=${quote(record.integrity)}` : "",
+    record.inlineChars !== undefined ? `chars=${record.inlineChars}` : "",
+    record.inlineHash ? `hash=${quote(record.inlineHash)}` : "",
+    record.inlineSnippet ? `snippet=${quote(record.inlineSnippet)}` : ""
+  ].filter(Boolean).join(" ");
 }
 
 function resourceLine(record: PageResourceRecord): string {
@@ -680,6 +746,7 @@ export async function writeSnapshot(
     dialogs: path.join(dir, "dialogs.ndjson"),
     frames: path.join(dir, "frames.ndjson"),
     resources: path.join(dir, "resources.ndjson"),
+    scripts: path.join(dir, "scripts.ndjson"),
     helpers: path.join(dir, "helpers.json")
   };
 
@@ -696,6 +763,7 @@ export async function writeSnapshot(
   await writeNdjson(artifacts.dialogs, pageDump.dialogs ?? []);
   await writeNdjson(artifacts.frames, pageDump.frames ?? []);
   await writeNdjson(artifacts.resources, pageDump.resources ?? []);
+  await writeNdjson(artifacts.scripts, pageDump.scripts ?? []);
   await fs.writeJson(artifacts.helpers, helpers, { spaces: 2 });
 
   let accessibilityText: string | undefined;
@@ -793,6 +861,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["dialogs", "dialogs.ndjson"],
     ["frames", "frames.ndjson"],
     ["resources", "resources.ndjson"],
+    ["scripts", "scripts.ndjson"],
     ["accessibilityText", "accessibility.txt"],
     ["helpers", "helpers.json"]
   ] as const;

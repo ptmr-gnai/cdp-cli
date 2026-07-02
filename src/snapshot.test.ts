@@ -100,12 +100,31 @@ describe("buildDumpText", () => {
           decodedBodySize: 1800,
           renderBlockingStatus: "non-blocking"
         }
+      ],
+      scripts: [
+        {
+          selector: "html > body > script",
+          src: "https://example.com/app.js",
+          type: "module",
+          async: true,
+          defer: false,
+          noModule: false,
+          inline: false,
+          inlineChars: 0
+        },
+        {
+          selector: "html > body > script:nth-of-type(2)",
+          inline: true,
+          inlineChars: 28,
+          inlineHash: "abc123",
+          inlineSnippet: "console.log('boot sequence')"
+        }
       ]
     }, helpers, accessibilityText);
 
     expect(dump).toContain("# cdp-cli dump v1");
     expect(dump).toContain("PAGE title=\"Example Login\"");
-    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 openShadowRoots=1");
+    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 scripts=2 openShadowRoots=1");
     expect(dump).toContain("HELPERS generic.links generic.forms");
     expect(dump).toContain("CONTROL [n000003] path=\"top > n000002#shadow-root\" <button>");
     expect(dump).toContain("label=\"Continue action\" text=\"Continue\"");
@@ -114,6 +133,8 @@ describe("buildDumpText", () => {
     expect(dump).toContain("DIALOG [n000005] <dialog>");
     expect(dump).toContain("FRAME [n000006] <iframe>");
     expect(dump).toContain("RESOURCE type=\"script\" url=\"https://example.com/app.js\" durationMs=42 transfer=1024 encoded=900 decoded=1800 renderBlocking=\"non-blocking\"");
+    expect(dump).toContain("SCRIPT inline=false src=\"https://example.com/app.js\" selector=\"html > body > script\" type=\"module\" async=true chars=0");
+    expect(dump).toContain("SCRIPT inline=true selector=\"html > body > script:nth-of-type(2)\" chars=28 hash=\"abc123\" snippet=\"console.log('boot sequence')\"");
     expect(dump).toContain("# accessibility\n# cdp-cli accessibility v1");
     expect(dump).toContain("A11Y [2] role=\"button\" name=\"Continue\"");
     expect(dump).toContain("# tree\n[n000001] <html>");

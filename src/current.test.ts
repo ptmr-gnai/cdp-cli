@@ -56,6 +56,7 @@ describe("readCurrentSnapshotSummary", () => {
     await fs.writeFile(path.join(current, "forms.ndjson"), "");
     await fs.writeFile(path.join(current, "dialogs.ndjson"), "");
     await fs.writeFile(path.join(current, "resources.ndjson"), `${JSON.stringify({ name: "https://example.com/app.js" })}\n`);
+    await fs.writeFile(path.join(current, "scripts.ndjson"), `${JSON.stringify({ src: "https://example.com/app.js" })}\n`);
 
     const summary = await readCurrentSnapshotSummary(outDir, target);
 
@@ -67,7 +68,8 @@ describe("readCurrentSnapshotSummary", () => {
       visibleControls: 3,
       forms: 0,
       dialogs: 0,
-      resources: 1
+      resources: 1,
+      scripts: 1
     });
     expect(summary.current.refs).toMatchObject({
       firstVisibleControl: { ref: "n000017", tag: "button", text: "Search" },
