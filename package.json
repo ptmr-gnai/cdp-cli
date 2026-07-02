@@ -1,0 +1,59 @@
+{
+  "name": "@ptmr-gnai/cdp-cli",
+  "version": "0.1.0",
+  "description": "Agent-first Chrome DevTools Protocol CLI that projects browser state onto the filesystem.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmr-gnai/cdp-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ptmr-gnai/cdp-cli/issues"
+  },
+  "homepage": "https://github.com/ptmr-gnai/cdp-cli#readme",
+  "bin": {
+    "cdp-cli": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "helpers",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts"
+  },
+  "keywords": [
+    "cdp",
+    "chrome",
+    "agents",
+    "cli",
+    "browser-automation"
+  ],
+  "author": "ptmr-gnai",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.3",
+    "commander": "^12.1.0",
+    "diff": "^5.2.0",
+    "fs-extra": "^11.2.0",
+    "picomatch": "^4.0.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/chrome-remote-interface": "^0.31.14",
+    "@types/diff": "^5.2.1",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.5.5",
+    "@types/picomatch": "^4.0.3",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^4.1.9"
+  }
+}
