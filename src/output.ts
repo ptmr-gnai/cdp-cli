@@ -26,6 +26,11 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
       description: "Capture the current page into local files."
     },
     {
+      rel: "snapshot-all",
+      command: "cdp-cli snapshot-all",
+      description: "Capture every open page target, including popups and new tabs, into local files."
+    },
+    {
       rel: "current",
       command: `cdp-cli current${suffix}`,
       description: "Show the latest snapshot files, counts, grep commands, and next actions."

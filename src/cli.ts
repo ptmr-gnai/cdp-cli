@@ -182,6 +182,64 @@ program
   });
 
 program
+  .command("snapshot-all")
+  .alias("dump-all")
+  .description("Project every open page target into local files.")
+  .argument("[label]", "snapshot label", "manual")
+  .action(async (label: string) => {
+    await runCommand("snapshot-all", async (options) => {
+      const targets = await listTargets(options.browserUrl, options.userDataDir);
+      const results = [];
+      for (const listedTarget of targets) {
+        let client: Awaited<ReturnType<typeof connectTarget>>["client"] | undefined;
+        try {
+          const connected = await connectTarget(options.browserUrl, listedTarget.id, options.userDataDir);
+          client = connected.client;
+          const snapshot = await writeSnapshot(client, {
+            outDir: options.outDir,
+            target: connected.target,
+            label,
+            screenshot: options.screenshot
+          });
+          results.push({
+            ok: true,
+            target: connected.target,
+            snapshot: snapshot.meta,
+            artifacts: snapshot.artifacts,
+            helpers: helpersForUrl(snapshot.meta.url)
+          });
+        } catch (error) {
+          results.push({
+            ok: false,
+            target: listedTarget,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        } finally {
+          if (client) await closeClient(client);
+        }
+      }
+      return {
+        ok: results.every((result) => result.ok),
+        command: "snapshot-all",
+        message: "Wrote snapshot artifacts for all open page targets.",
+        data: {
+          targets,
+          results,
+          summary: {
+            ok: results.filter((result) => result.ok).length,
+            failed: results.filter((result) => !result.ok).length
+          }
+        },
+        actions: [
+          { rel: "list", command: "cdp-cli list", description: "List page targets." },
+          { rel: "current", command: "cdp-cli current", description: "Inspect the selected target's latest snapshot." },
+          { rel: "snapshot-all", command: "cdp-cli snapshot-all", description: "Snapshot all open page targets again." }
+        ]
+      };
+    });
+  });
+
+program
   .command("current")
   .alias("orient")
   .description("Read the latest filesystem projection for the selected page target.")
