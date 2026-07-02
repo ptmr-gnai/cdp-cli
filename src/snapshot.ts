@@ -4,7 +4,7 @@ import { createPatch } from "diff";
 import { nowStamp, sanitizeFilePart } from "./env.js";
 import { helperSummaries } from "./helpers.js";
 import { errorData, trace } from "./trace.js";
-import type { ArtifactMap, SnapshotResult, TargetInfo } from "./types.js";
+import type { ArtifactMap, HelperSummary, SnapshotMeta, SnapshotResult, TargetInfo } from "./types.js";
 
 type CdpClient = any;
 
@@ -34,6 +34,37 @@ export interface SnapshotOptions {
   target: TargetInfo;
   label: string;
   screenshot: boolean;
+}
+
+interface PageDumpRecord {
+  ref?: string;
+  framePath?: string[];
+  selector?: string;
+  tag?: string;
+  attrs?: Record<string, unknown>;
+  role?: string | null;
+  visible?: boolean;
+  rect?: unknown;
+  text?: string;
+  href?: string;
+  src?: string | null;
+  sameOrigin?: boolean;
+  action?: string | null;
+  method?: string | null;
+  controls?: PageDumpRecord[];
+  name?: string | null;
+  type?: string | null;
+  placeholder?: string | null;
+}
+
+interface PageDump {
+  tree?: string[];
+  nodes?: PageDumpRecord[];
+  links?: PageDumpRecord[];
+  controls?: PageDumpRecord[];
+  forms?: PageDumpRecord[];
+  dialogs?: PageDumpRecord[];
+  frames?: PageDumpRecord[];
 }
 
 const PAGE_STATE_EXPRESSION = `(() => {
@@ -364,6 +395,94 @@ export function targetDir(outDir: string, target: TargetInfo, url = target.url):
   return path.join(outDir, "targets", `${sanitizeFilePart(url)}-${target.id}`);
 }
 
+export function buildDumpText(meta: SnapshotMeta, pageDump: PageDump, helpers: HelperSummary[]): string {
+  const tree = pageDump.tree ?? [];
+  const controls = pageDump.controls ?? [];
+  const visibleControls = controls.filter((record) => record.visible);
+  const forms = pageDump.forms ?? [];
+  const dialogs = pageDump.dialogs ?? [];
+  const frames = pageDump.frames ?? [];
+  const nodes = pageDump.nodes ?? [];
+  const links = pageDump.links ?? [];
+  const helperCommands = helpers.flatMap((helper) =>
+    helper.commands.map((command) => `${helper.id}.${command.name}`)
+  );
+  const openShadowRoots = tree.filter((line) => line.includes("#shadow-root(open)")).length;
+
+  const lines = [
+    "# cdp-cli dump v1",
+    `PAGE title=${quote(meta.title)} url=${quote(meta.url)} target=${quote(meta.targetId)} snapshot=${quote(meta.id)}`,
+    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} openShadowRoots=${openShadowRoots}`,
+    `HELPERS ${helperCommands.length ? helperCommands.join(" ") : "none"}`,
+    "",
+    "# suggested-grep",
+    "rg 'CONTROL|FORM|DIALOG|FRAME|#shadow-root|selector=' dump.txt",
+    "rg 'Search|Login|Submit|Continue|Next|button|input|dialog' dump.txt",
+    "",
+    "# visible-controls"
+  ];
+
+  lines.push(...visibleControls.slice(0, 80).map((record) => `CONTROL ${recordLine(record)}`));
+  if (visibleControls.length > 80) lines.push(`CONTROL_MORE hidden=${visibleControls.length - 80}`);
+  if (visibleControls.length === 0) lines.push("CONTROL none");
+
+  lines.push("", "# forms");
+  lines.push(...forms.slice(0, 40).map((record) => {
+    const controlsText = (record.controls ?? [])
+      .slice(0, 20)
+      .map((control) => [
+        control.tag,
+        control.name ? `name=${quote(control.name)}` : "",
+        control.type ? `type=${quote(control.type)}` : "",
+        control.placeholder ? `placeholder=${quote(control.placeholder)}` : "",
+        control.text ? `text=${quote(control.text)}` : ""
+      ].filter(Boolean).join(":"))
+      .join(" ");
+    return `FORM ${recordLine(record)} action=${quote(record.action ?? "")} method=${quote(record.method ?? "")} controls=${quote(controlsText)}`;
+  }));
+  if (forms.length > 40) lines.push(`FORM_MORE hidden=${forms.length - 40}`);
+  if (forms.length === 0) lines.push("FORM none");
+
+  lines.push("", "# dialogs");
+  lines.push(...dialogs.slice(0, 40).map((record) => `DIALOG ${recordLine(record)}`));
+  if (dialogs.length > 40) lines.push(`DIALOG_MORE hidden=${dialogs.length - 40}`);
+  if (dialogs.length === 0) lines.push("DIALOG none");
+
+  lines.push("", "# frames");
+  lines.push(...frames.slice(0, 40).map((record) => `FRAME ${recordLine(record)} src=${quote(record.src ?? "")} sameOrigin=${record.sameOrigin === true}`));
+  if (frames.length > 40) lines.push(`FRAME_MORE hidden=${frames.length - 40}`);
+  if (frames.length === 0) lines.push("FRAME none");
+
+  lines.push("", "# tree", ...tree);
+  return `${lines.join("\n")}\n`;
+}
+
+function recordLine(record: PageDumpRecord): string {
+  return [
+    record.ref ? `[${record.ref}]` : "",
+    record.framePath?.length ? `path=${quote(record.framePath.join(" > "))}` : "",
+    record.tag ? `<${record.tag}>` : "",
+    record.role ? `role=${quote(record.role)}` : "",
+    record.selector ? `selector=${quote(record.selector)}` : "",
+    record.visible !== undefined ? `visible=${record.visible}` : "",
+    record.rect ? `rect=${JSON.stringify(record.rect)}` : "",
+    record.text ? `text=${quote(record.text)}` : "",
+    record.attrs ? attrsLine(record.attrs) : ""
+  ].filter(Boolean).join(" ");
+}
+
+function attrsLine(attrs: Record<string, unknown>): string {
+  const entries = Object.entries(attrs)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .slice(0, 16)
+    .map(([key, value]) => `${key}=${quote(value)}`);
+  return entries.length ? `attrs={${entries.join(" ")}}` : "";
+}
+
+function quote(value: unknown): string {
+  return JSON.stringify(String(value ?? "").replace(/\s+/g, " ").trim());
+}
+
 export async function writeSnapshot(
   client: CdpClient,
   options: SnapshotOptions
@@ -383,15 +502,7 @@ export async function writeSnapshot(
   if (stateResult.exception) throw new Error(stateResult.exception);
   if (dumpResult.exception) throw new Error(dumpResult.exception);
   const pageState = stateResult.value as { url?: string; title?: string };
-  const pageDump = dumpResult.value as {
-    tree?: string[];
-    nodes?: unknown[];
-    links?: unknown[];
-    controls?: unknown[];
-    forms?: unknown[];
-    dialogs?: unknown[];
-    frames?: unknown[];
-  };
+  const pageDump = dumpResult.value as PageDump;
   const controls = pageDump.controls ?? [];
   const visibleControls = controls.filter((record) => {
     return Boolean((record as { visible?: unknown })?.visible);
@@ -430,7 +541,7 @@ export async function writeSnapshot(
   await fs.ensureDir(dir);
   await fs.writeJson(artifacts.meta, meta, { spaces: 2 });
   await fs.writeJson(artifacts.state, pageState, { spaces: 2 });
-  await fs.writeFile(artifacts.dump, `${(pageDump.tree ?? []).join("\n")}\n`, "utf8");
+  await fs.writeFile(artifacts.dump, buildDumpText(meta, pageDump, helpers), "utf8");
   await fs.writeFile(artifacts.text, String(textResult.value ?? ""), "utf8");
   await fs.writeFile(artifacts.dom, String(htmlResult.value ?? ""), "utf8");
   await writeNdjson(artifacts.nodes, pageDump.nodes ?? []);
@@ -529,6 +640,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["visibleControls", "visible-controls.ndjson"],
     ["forms", "forms.ndjson"],
     ["dialogs", "dialogs.ndjson"],
+    ["frames", "frames.ndjson"],
     ["helpers", "helpers.json"]
   ] as const;
   const artifacts: ArtifactMap = {};
