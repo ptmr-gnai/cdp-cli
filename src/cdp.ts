@@ -276,6 +276,14 @@ export async function closeClient(client: CdpClient): Promise<void> {
   }
 }
 
+export async function navigateTarget(client: CdpClient, url: string, timeoutMs: number): Promise<void> {
+  await trace({ event: "page.navigate.start", data: { url, timeoutMs } });
+  await client.Page.enable();
+  await client.Page.navigate({ url });
+  await waitForLoad(client, timeoutMs);
+  await trace({ event: "page.navigate.done", ok: true, data: { url } });
+}
+
 export async function waitForLoad(client: CdpClient, timeoutMs: number): Promise<void> {
   const Page = client.Page;
   await trace({ event: "page.wait.start", data: { timeoutMs } });
@@ -369,6 +377,7 @@ function createSessionClient(browser: CdpClient, sessionId: string): CdpClient {
     },
     Page: {
       enable: () => send("Page.enable"),
+      navigate: (params: Record<string, unknown>) => send("Page.navigate", params),
       captureScreenshot: (params: Record<string, unknown>) => send("Page.captureScreenshot", params),
       loadEventFired: (callback: (...args: unknown[]) => void) =>
         onSessionEvent("Page.loadEventFired", callback),

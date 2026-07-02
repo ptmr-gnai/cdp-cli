@@ -26,9 +26,24 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
       description: "Capture the current page into local files."
     },
     {
+      rel: "navigate",
+      command: `cdp-cli navigate https://example.com${suffix}`,
+      description: "Navigate this page target and capture a snapshot."
+    },
+    {
       rel: "eval",
       command: `cdp-cli eval 'document.title'${suffix}`,
       description: "Evaluate JavaScript and write before/after artifacts."
+    },
+    {
+      rel: "click-ref",
+      command: `cdp-cli click n000001${suffix}`,
+      description: "Click a ref from the latest visible-controls.ndjson, controls.ndjson, or dump.txt."
+    },
+    {
+      rel: "fill-ref",
+      command: `cdp-cli fill n000001 'text'${suffix}`,
+      description: "Fill a ref from the latest snapshot files."
     },
     {
       rel: "helpers",

@@ -69,12 +69,15 @@ Every command prints JSON with filesystem paths and suggested next actions.
 cdp-cli status
 cdp-cli list
 cdp-cli open https://example.com
+cdp-cli navigate https://example.org
 cdp-cli close --target example.com
 cdp-cli snapshot [label]
 cdp-cli eval 'document.title'
 cdp-cli eval --file ./scratch.js
 cdp-cli click 'a[href]'
+cdp-cli click n000017
 cdp-cli type 'input[name="q"]' 'search text'
+cdp-cli fill n000017 'search text'
 cdp-cli press Enter
 cdp-cli helpers list
 cdp-cli helpers run generic links
@@ -153,6 +156,14 @@ The important files for agents are usually:
 - `diffs/*`: patches from the previous current snapshot to the latest snapshot.
 
 `dump.txt` and the structured indexes redact sensitive hidden/password-like input values and omit script/template bodies. `dom.html` is intentionally raw and should be treated as a fallback artifact.
+
+Refs such as `n000017` are reusable by action commands until the next snapshot changes them:
+
+```sh
+rg 'Search|Login|Submit|selector=' .cdp-cli/targets/*/current/{dump.txt,visible-controls.ndjson,forms.ndjson}
+cdp-cli click n000017
+cdp-cli fill n000042 'agent query'
+```
 
 ## Read-only evals
 

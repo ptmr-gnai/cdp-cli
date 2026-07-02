@@ -358,20 +358,16 @@ export async function evaluateExpression(
   };
 }
 
-export function targetDir(outDir: string, target: TargetInfo): string {
-  return path.join(outDir, "targets", `${sanitizeFilePart(target.url)}-${target.id}`);
+export function targetDir(outDir: string, target: TargetInfo, url = target.url): string {
+  return path.join(outDir, "targets", `${sanitizeFilePart(url)}-${target.id}`);
 }
 
 export async function writeSnapshot(
   client: CdpClient,
   options: SnapshotOptions
 ): Promise<SnapshotResult> {
-  const baseDir = targetDir(options.outDir, options.target);
   const snapshotId = `${nowStamp()}-${sanitizeFilePart(options.label)}`;
-  const dir = path.join(baseDir, "snapshots", snapshotId);
-  const currentDir = path.join(baseDir, "current");
-  await fs.ensureDir(dir);
-  await trace({ event: "snapshot.start", data: { label: options.label, targetId: options.target.id, dir } });
+  await trace({ event: "snapshot.start", data: { label: options.label, targetId: options.target.id } });
 
   await trace({ event: "snapshot.evaluate.start", data: { label: options.label } });
   const [stateResult, htmlResult, textResult, dumpResult] = await Promise.all([
@@ -407,6 +403,9 @@ export async function writeSnapshot(
     targetId: options.target.id,
     helperIds: helpers.map((helper) => helper.id)
   };
+  const baseDir = targetDir(options.outDir, options.target, meta.url);
+  const dir = path.join(baseDir, "snapshots", snapshotId);
+  const currentDir = path.join(baseDir, "current");
 
   const artifacts: ArtifactMap = {
     snapshot: dir,
@@ -424,6 +423,7 @@ export async function writeSnapshot(
     helpers: path.join(dir, "helpers.json")
   };
 
+  await fs.ensureDir(dir);
   await fs.writeJson(artifacts.meta, meta, { spaces: 2 });
   await fs.writeJson(artifacts.state, pageState, { spaces: 2 });
   await fs.writeFile(artifacts.dump, `${(pageDump.tree ?? []).join("\n")}\n`, "utf8");

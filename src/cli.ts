@@ -8,6 +8,7 @@ import {
   createTarget,
   getBrowserStatus,
   listTargets,
+  navigateTarget,
   selectTarget,
   waitForLoad
 } from "./cdp.js";
@@ -17,6 +18,7 @@ import { evaluateExpression, writeSnapshot } from "./snapshot.js";
 import { readDaemonState, serveDaemon, startDaemon, stopDaemon } from "./daemon.js";
 import { parseEvalSites, runReadOnlyEvalSites } from "./evalSites.js";
 import { errorEnvelope, printEnvelope, targetActions } from "./output.js";
+import { resolveSelectorRef } from "./refs.js";
 import { configureTrace } from "./trace.js";
 import type { CliGlobalOptions, JsonEnvelope } from "./types.js";
 
@@ -104,6 +106,37 @@ program
   });
 
 program
+  .command("navigate")
+  .alias("go")
+  .description("Navigate an existing page target, then snapshot it.")
+  .argument("<url>", "URL to navigate to")
+  .action(async (url: string) => {
+    await runCommand("navigate", async (options) => {
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
+      try {
+        await navigateTarget(client, url, options.timeout);
+        const snapshot = await writeSnapshot(client, {
+          outDir: options.outDir,
+          target,
+          label: "navigate",
+          screenshot: options.screenshot
+        });
+        return {
+          ok: true,
+          command: "navigate",
+          message: "Navigated target and wrote snapshot artifacts.",
+          data: { target, snapshot: snapshot.meta },
+          artifacts: snapshot.artifacts,
+          helpers: helpersForUrl(snapshot.meta.url),
+          actions: targetActions(target)
+        };
+      } finally {
+        await closeClient(client);
+      }
+    });
+  });
+
+program
   .command("close")
   .description("Close a page target.")
   .argument("[target]", "target id, title substring, or URL substring")
@@ -178,22 +211,23 @@ program
 
 program
   .command("click")
-  .description("Click a DOM selector, recording before/after snapshots and diffs.")
-  .argument("<selector>", "CSS selector")
-  .action(async (selector: string) => {
+  .description("Click a DOM selector or latest snapshot ref, recording before/after snapshots and diffs.")
+  .argument("<selector-or-ref>", "CSS selector or ref like n000017")
+  .action(async (selectorOrRef: string) => {
     await runCommand("click", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
+        const resolved = await resolveSelectorRef(options.outDir, target, selectorOrRef);
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "click",
-          clickExpression(selector),
+          clickExpression(resolved.selector),
           () => waitForLoad(client, options.timeout)
         );
         return {
           ok: !action.exception,
           command: "click",
-          data: { target, result: action.result, exception: action.exception ?? null },
+          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)
@@ -206,23 +240,53 @@ program
 
 program
   .command("type")
-  .description("Type text into a selector, recording before/after snapshots and diffs.")
-  .argument("<selector>", "CSS selector")
+  .description("Type text into a selector or latest snapshot ref, recording before/after snapshots and diffs.")
+  .argument("<selector-or-ref>", "CSS selector or ref like n000017")
   .argument("<text>", "text to enter")
   .option("--append", "append instead of replacing")
-  .action(async (selector: string, text: string, commandOptions: { append?: boolean }) => {
+  .action(async (selectorOrRef: string, text: string, commandOptions: { append?: boolean }) => {
     await runCommand("type", async (options) => {
       const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
       try {
+        const resolved = await resolveSelectorRef(options.outDir, target, selectorOrRef);
         const action = await runRecordedEvaluation(
           { client, target, outDir: options.outDir, screenshot: options.screenshot },
           "type",
-          typeExpression(selector, text, Boolean(commandOptions.append))
+          typeExpression(resolved.selector, text, Boolean(commandOptions.append))
         );
         return {
           ok: !action.exception,
           command: "type",
-          data: { target, result: action.result, exception: action.exception ?? null },
+          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
+          artifacts: action.artifacts,
+          helpers: helpersForUrl(action.after.meta.url),
+          actions: targetActions(target)
+        };
+      } finally {
+        await closeClient(client);
+      }
+    });
+  });
+
+program
+  .command("fill")
+  .description("Replace text in a selector or latest snapshot ref.")
+  .argument("<selector-or-ref>", "CSS selector or ref like n000017")
+  .argument("<text>", "text to enter")
+  .action(async (selectorOrRef: string, text: string) => {
+    await runCommand("fill", async (options) => {
+      const { client, target } = await connectTarget(options.browserUrl, options.target, options.userDataDir);
+      try {
+        const resolved = await resolveSelectorRef(options.outDir, target, selectorOrRef);
+        const action = await runRecordedEvaluation(
+          { client, target, outDir: options.outDir, screenshot: options.screenshot },
+          "fill",
+          typeExpression(resolved.selector, text, false)
+        );
+        return {
+          ok: !action.exception,
+          command: "fill",
+          data: { target, locator: resolved, result: action.result, exception: action.exception ?? null },
           artifacts: action.artifacts,
           helpers: helpersForUrl(action.after.meta.url),
           actions: targetActions(target)
