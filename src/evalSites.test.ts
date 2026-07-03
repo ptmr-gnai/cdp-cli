@@ -149,7 +149,12 @@ describe("evaluateSnapshotQuality", () => {
     await fs.writeJson(path.join(dir, "state.json"), {
       url: "https://www.example.com/?js_challenge=1&token=abc",
       title: "",
-      readyState: "loading"
+      readyState: "loading",
+      activeElement: {
+        selector: "html > body",
+        tag: "body",
+        text: "window.__CF$cv$params={}; a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';"
+      }
     });
     await fs.writeFile(path.join(dir, "dump.txt"), [
       "# cdp-cli dump v1",
@@ -173,10 +178,10 @@ describe("evaluateSnapshotQuality", () => {
       "FRAME none",
       "",
       "# resources",
-      "RESOURCE none",
+      "RESOURCE type=\"script\" url=\"https://discord.com/cdn-cgi/challenge-platform/scripts/jsd/main.js\"",
       "",
       "# scripts",
-      "SCRIPT none",
+      "SCRIPT inline=false src=\"/cdn-cgi/challenge-platform/scripts/jsd/main.js\" text=\"window.__CF$cv$params={r:'abc'}\"",
       "",
       "# accessibility",
       "# cdp-cli accessibility v1",
@@ -194,8 +199,8 @@ describe("evaluateSnapshotQuality", () => {
     await writeNdjson(path.join(dir, "forms.ndjson"), []);
     await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
     await writeNdjson(path.join(dir, "frames.ndjson"), []);
-    await writeNdjson(path.join(dir, "resources.ndjson"), []);
-    await writeNdjson(path.join(dir, "scripts.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), [{ name: "https://discord.com/cdn-cgi/challenge-platform/scripts/jsd/main.js" }]);
+    await writeNdjson(path.join(dir, "scripts.ndjson"), [{ src: "/cdn-cgi/challenge-platform/scripts/jsd/main.js", text: "window.__CF$cv$params={r:'abc'}" }]);
 
     const quality = await evaluateSnapshotQuality(dir);
 
@@ -277,6 +282,82 @@ describe("evaluateSnapshotQuality", () => {
       actionReady: true
     });
     expect(quality.warnings).not.toContain("page looks like a bot challenge, captcha, or verification flow");
+  });
+
+  it("warns when a snapshot looks stuck on a loading shell", async () => {
+    const dir = await makeSnapshotDir();
+    await writeRequiredArtifacts(dir);
+    await fs.writeJson(path.join(dir, "meta.json"), {
+      url: "https://app.example.com/login",
+      title: "Example App"
+    });
+    await fs.writeJson(path.join(dir, "state.json"), {
+      url: "https://app.example.com/login",
+      title: "Example App",
+      readyState: "interactive",
+      activeElement: {
+        selector: "html > body",
+        tag: "body",
+        text: "Loading..."
+      }
+    });
+    await fs.writeFile(path.join(dir, "dump.txt"), [
+      "# cdp-cli dump v1",
+      "PAGE title=\"Example App\" url=\"https://app.example.com/login\" target=\"T\" snapshot=\"S\"",
+      "COUNTS nodes=3 controls=0 visibleControls=0 links=0 forms=0 dialogs=0 frames=0 resources=1 scripts=1 openShadowRoots=0",
+      "HELPERS generic.links generic.forms",
+      "",
+      "# suggested-grep",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
+      "",
+      "# visible-controls",
+      "CONTROL none",
+      "",
+      "# forms",
+      "FORM none",
+      "",
+      "# dialogs",
+      "DIALOG none",
+      "",
+      "# frames",
+      "FRAME none",
+      "",
+      "# resources",
+      "RESOURCE type=\"script\" url=\"https://app.example.com/app.js\"",
+      "",
+      "# scripts",
+      "SCRIPT inline=false src=\"https://app.example.com/app.js\"",
+      "",
+      "# accessibility",
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\" name=\"Example App\" props={busy=\"1\"}",
+      "A11Y [2] role=\"progressbar\" props={busy=\"1\"}",
+      "",
+      "# tree",
+      "[n000001] <html> selector=\"html\" visible=true",
+      "  [n000002] <div role=\"progressbar\" aria-busy=\"true\"> selector=\"#loading\" visible=true text=\"Loading...\""
+    ].join("\n") + "\n");
+    await fs.writeFile(path.join(dir, "text.md"), "");
+    await fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\nA11Y [1] role=\"RootWebArea\" name=\"Example App\" props={busy=\"1\"}\nA11Y [2] role=\"progressbar\" props={busy=\"1\"}\n");
+    await writeNdjson(path.join(dir, "nodes.ndjson"), [{ ref: "n000001" }, { ref: "n000002" }, { ref: "n000003" }]);
+    await writeNdjson(path.join(dir, "links.ndjson"), []);
+    await writeNdjson(path.join(dir, "controls.ndjson"), []);
+    await writeNdjson(path.join(dir, "visible-controls.ndjson"), []);
+    await writeNdjson(path.join(dir, "forms.ndjson"), []);
+    await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
+    await writeNdjson(path.join(dir, "frames.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), [{ name: "https://app.example.com/app.js" }]);
+    await writeNdjson(path.join(dir, "scripts.ndjson"), [{ src: "https://app.example.com/app.js" }]);
+
+    const quality = await evaluateSnapshotQuality(dir);
+
+    expect(quality.coverage).toMatchObject({
+      pageReady: true,
+      loadingShellLikely: true,
+      grepReady: false,
+      actionReady: false
+    });
+    expect(quality.warnings).toContain("page looks stuck on a loading or skeleton shell");
   });
 
   it("summarizes eval site results into an agent-readable matrix", () => {

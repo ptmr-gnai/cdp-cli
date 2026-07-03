@@ -58,6 +58,7 @@ export interface EvalSiteCoverage {
   dumpNavigable: boolean;
   pageReady: boolean;
   challengeLikely: boolean;
+  loadingShellLikely: boolean;
   grepReady: boolean;
   actionReady: boolean;
   accessibilityReady: boolean;
@@ -84,6 +85,9 @@ interface EvalSnapshotState {
   url?: string;
   title?: string;
   readyState?: string;
+  activeElement?: {
+    text?: string;
+  };
 }
 
 export const DEFAULT_EVAL_SITES: EvalSite[] = [
@@ -335,12 +339,17 @@ function qualityCoverage(
   const readyState = String(state?.readyState ?? "").toLowerCase();
   const url = String(state?.url ?? meta?.url ?? "");
   const title = String(state?.title ?? meta?.title ?? "");
-  const challengeHaystack = `${url}\n${title}\n${challengeText}`;
+  const activeText = String(state?.activeElement?.text ?? "");
+  const challengeHaystack = `${url}\n${title}\n${activeText}\n${challengeText}`;
+  const loadingShellLikely =
+    /(?:role="progressbar"|aria-busy="true"|busy="1"|Loading[.\u2026]*|loading-spinner|initial-loading-spinner|skeleton)/i.test(challengeHaystack) &&
+    !/loading="lazy"/i.test(challengeHaystack);
   return {
     filesReady: Object.values(requiredFiles).every(Boolean),
     dumpNavigable: Object.values(dumpSections).every(Boolean),
     pageReady: readyState === "complete" || readyState === "interactive",
-    challengeLikely: /(?:captcha required|enter captcha|solve captcha|js_challenge|challenge\.js|cf_chl|awswaf|aws-waf|not a robot|verify that you'?re not a robot|verification flow|blocked by)/i.test(challengeHaystack),
+    challengeLikely: /(?:captcha required|enter captcha|solve captcha|js_challenge|challenge\.js|challenge-platform|cdn-cgi\/challenge-platform|__CF\$cv|cf_chl|awswaf|aws-waf|not a robot|verify that you'?re not a robot|verification flow|blocked by)/i.test(challengeHaystack),
+    loadingShellLikely,
     grepReady: counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0,
     actionReady: counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0,
     accessibilityReady: counts.accessibilityLines > 1,
@@ -372,6 +381,9 @@ function qualityWarnings(
   if (!coverage.accessibilityReady) warnings.push("accessibility.txt is too thin for a11y-first inspection");
   if (!coverage.networkReady) warnings.push("resources.ndjson and scripts.ndjson have no records");
   if (!coverage.pageReady) warnings.push(`page readyState is ${JSON.stringify(state?.readyState ?? null)}`);
+  if (coverage.loadingShellLikely && (!coverage.grepReady || !coverage.actionReady)) {
+    warnings.push("page looks stuck on a loading or skeleton shell");
+  }
   if (coverage.challengeLikely && (!coverage.grepReady || !coverage.actionReady)) {
     warnings.push("page looks like a bot challenge, captcha, or verification flow");
   }
