@@ -124,8 +124,11 @@ describe("buildDumpText", () => {
 
     expect(dump).toContain("# cdp-cli dump v1");
     expect(dump).toContain("PAGE title=\"Example Login\"");
-    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 scripts=2 openShadowRoots=1");
+    expect(dump).toContain("COUNTS nodes=3 controls=1 visibleControls=1 actionableControls=1 links=0 forms=1 dialogs=1 frames=1 resources=1 scripts=2 openShadowRoots=1");
     expect(dump).toContain("HELPERS generic.links generic.forms");
+    expect(dump).toContain("# actionable-controls");
+    expect(dump).toContain("ACTIONABLE [n000003]");
+    expect(dump).toContain("recommended=\"click\"");
     expect(dump).toContain("CONTROL [n000003] path=\"top > n000002#shadow-root\" <button>");
     expect(dump).toContain("label=\"Continue action\" text=\"Continue\"");
     expect(dump).toContain("FORM [n000004] <form>");

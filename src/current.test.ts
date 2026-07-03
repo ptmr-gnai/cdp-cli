@@ -46,6 +46,14 @@ describe("readCurrentSnapshotSummary", () => {
     });
     await fs.writeFile(path.join(current, "dump.txt"), "[n000001] <button> text=\"Search\"\n");
     await fs.writeFile(
+      path.join(current, "actionable-controls.ndjson"),
+      [
+        { ref: "n000003", stableRef: "r_logo00000000", selector: "a.logo", tag: "a", attrs: { href: "/" }, visible: true, text: "", recommendedAction: "click", confidence: 35, reasons: ["visible", "link"] },
+        { ref: "n000017", stableRef: "r_searchbutton1", selector: "button", tag: "button", visible: true, text: "Search", recommendedAction: "click", confidence: 55, reasons: ["visible", "clickable", "action text"] },
+        { ref: "n000042", stableRef: "r_emailinput01", selector: "input", tag: "input", attrs: { type: "text" }, accessibleName: "Email address", visible: true, recommendedAction: "fill", confidence: 70, reasons: ["visible", "fillable"] }
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n"
+    );
+    await fs.writeFile(
       path.join(current, "visible-controls.ndjson"),
       [
         { ref: "n000003", selector: "a.logo", tag: "a", attrs: { href: "/" }, visible: true, text: "" },
@@ -61,7 +69,7 @@ describe("readCurrentSnapshotSummary", () => {
     const diffDir = path.join(outDir, "targets", "example.com-TARGET123", "diffs", "snap1");
     await fs.ensureDir(diffDir);
     await fs.writeFile(
-      path.join(diffDir, "dump.patch"),
+      path.join(diffDir, "dump.diff"),
       [
         "--- dump.txt\tprevious",
         "+++ dump.txt\tcurrent",
@@ -98,7 +106,7 @@ describe("readCurrentSnapshotSummary", () => {
       totals: { files: 1, additions: 1, removals: 1, hunks: 1 },
       files: [
         expect.objectContaining({
-          name: "dump.patch",
+          name: "dump.diff",
           additions: 1,
           removals: 1,
           hunks: 1
@@ -107,6 +115,7 @@ describe("readCurrentSnapshotSummary", () => {
     });
     expect(summary.current.refs.candidates[0]).toMatchObject({
       ref: "n000042",
+      stableRef: "r_emailinput01",
       reasons: expect.arrayContaining(["input hint", "fillable"])
     });
     expect(summary.current.refs.candidates.find((candidate) => candidate.ref === "n000042")).toMatchObject({
@@ -116,14 +125,19 @@ describe("readCurrentSnapshotSummary", () => {
     expect(summary.current.refs.candidates.map((candidate) => candidate.ref).indexOf("n000003"))
       .toBeGreaterThan(summary.current.refs.candidates.map((candidate) => candidate.ref).indexOf("n000017"));
     expect(summary.current.files).toContainEqual(expect.objectContaining({
+      name: "actionable-controls.ndjson",
+      exists: true,
+      lines: 3
+    }));
+    expect(summary.current.files).toContainEqual(expect.objectContaining({
       name: "visible-controls.ndjson",
       exists: true,
       lines: 3
     }));
     expect(summary.suggestedSearches.join("\n")).toContain("rg");
     expect(summary.suggestedSearches.join("\n")).toContain(diffDir);
-    expect(summary.nextCommands).toContain('cdp-cli click n000017 --target "TARGET123"');
-    expect(summary.nextCommands).toContain('cdp-cli fill n000042 \'text\' --target "TARGET123"');
+    expect(summary.nextCommands).toContain('cdp-cli click r_searchbutton1 --target "TARGET123"');
+    expect(summary.nextCommands).toContain('cdp-cli fill r_emailinput01 \'text\' --target "TARGET123"');
   });
 });
 

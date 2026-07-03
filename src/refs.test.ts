@@ -28,6 +28,23 @@ describe("resolveSelectorRef", () => {
     });
   });
 
+  it("resolves stable refs from the actionable controls index", async () => {
+    const outDir = await makeOutDir();
+    const current = path.join(outDir, "targets", "example.com-TARGET123", "current");
+    await fs.ensureDir(current);
+    await fs.writeFile(
+      path.join(current, "actionable-controls.ndjson"),
+      `${JSON.stringify({ ref: "n000017", stableRef: "r_abcdef123456", selector: "#search", tag: "input", visible: true })}\n`
+    );
+
+    await expect(resolveSelectorRef(outDir, target, "stable:r_abcdef123456")).resolves.toMatchObject({
+      ref: "n000017",
+      stableRef: "r_abcdef123456",
+      selector: "#search"
+    });
+  });
+
+
   it("falls back to dump.txt when a ref is not in structured indexes", async () => {
     const outDir = await makeOutDir();
     const current = path.join(outDir, "targets", "renavigated.example-TARGET123", "current");

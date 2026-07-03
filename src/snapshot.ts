@@ -1,4 +1,5 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import fs from "fs-extra";
 import { createPatch } from "diff";
 import { nowStamp, sanitizeFilePart } from "./env.js";
@@ -38,6 +39,7 @@ export interface SnapshotOptions {
 
 interface PageDumpRecord {
   ref?: string;
+  stableRef?: string;
   framePath?: string[];
   selector?: string;
   tag?: string;
@@ -56,6 +58,11 @@ interface PageDumpRecord {
   name?: string | null;
   type?: string | null;
   placeholder?: string | null;
+  recommendedAction?: "click" | "fill" | "select" | "toggle" | "inspect";
+  confidence?: number;
+  reasons?: string[];
+  source?: string;
+  formRef?: string;
 }
 
 interface PageResourceRecord {
@@ -88,6 +95,7 @@ interface PageDump {
   nodes?: PageDumpRecord[];
   links?: PageDumpRecord[];
   controls?: PageDumpRecord[];
+  actionableControls?: PageDumpRecord[];
   forms?: PageDumpRecord[];
   dialogs?: PageDumpRecord[];
   frames?: PageDumpRecord[];
@@ -520,6 +528,7 @@ export function buildDumpText(
   const tree = pageDump.tree ?? [];
   const controls = pageDump.controls ?? [];
   const visibleControls = controls.filter((record) => record.visible);
+  const actionableControls = pageDump.actionableControls ?? buildActionableControls(pageDump);
   const forms = pageDump.forms ?? [];
   const dialogs = pageDump.dialogs ?? [];
   const frames = pageDump.frames ?? [];
@@ -535,15 +544,24 @@ export function buildDumpText(
   const lines = [
     "# cdp-cli dump v1",
     `PAGE title=${quote(meta.title)} url=${quote(meta.url)} target=${quote(meta.targetId)} snapshot=${quote(meta.id)}`,
-    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} resources=${resources.length} scripts=${scripts.length} openShadowRoots=${openShadowRoots}`,
+    `COUNTS nodes=${nodes.length} controls=${controls.length} visibleControls=${visibleControls.length} actionableControls=${actionableControls.length} links=${links.length} forms=${forms.length} dialogs=${dialogs.length} frames=${frames.length} resources=${resources.length} scripts=${scripts.length} openShadowRoots=${openShadowRoots}`,
     `HELPERS ${helperCommands.length ? helperCommands.join(" ") : "none"}`,
     "",
     "# suggested-grep",
-    "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
+    "rg 'ACTIONABLE|CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
     "rg 'Search|Login|Submit|Continue|Next|button|input|dialog' dump.txt",
     "",
-    "# visible-controls"
+    "# actionable-controls"
   ];
+
+  lines.push(...actionableControls.slice(0, 80).map((record) => `ACTIONABLE ${recordLine(record)} recommended=${quote(record.recommendedAction ?? "inspect")} confidence=${record.confidence ?? 0}${record.reasons?.length ? ` reasons=${quote(record.reasons.join(","))}` : ""}`));
+  if (actionableControls.length > 80) lines.push(`ACTIONABLE_MORE hidden=${actionableControls.length - 80}`);
+  if (actionableControls.length === 0) lines.push("ACTIONABLE none");
+
+  lines.push(
+    "",
+    "# visible-controls"
+  );
 
   lines.push(...visibleControls.slice(0, 80).map((record) => `CONTROL ${recordLine(record)}`));
   if (visibleControls.length > 80) lines.push(`CONTROL_MORE hidden=${visibleControls.length - 80}`);
@@ -671,6 +689,7 @@ function axString(value: AxValue | undefined): string {
 function recordLine(record: PageDumpRecord): string {
   return [
     record.ref ? `[${record.ref}]` : "",
+    record.stableRef ? `stable=${record.stableRef}` : "",
     record.framePath?.length ? `path=${quote(record.framePath.join(" > "))}` : "",
     record.tag ? `<${record.tag}>` : "",
     record.role ? `role=${quote(record.role)}` : "",
@@ -681,6 +700,140 @@ function recordLine(record: PageDumpRecord): string {
     record.text ? `text=${quote(record.text)}` : "",
     record.attrs ? attrsLine(record.attrs) : ""
   ].filter(Boolean).join(" ");
+}
+
+function attachStableRefs(pageDump: PageDump): PageDump {
+  const visit = (record: PageDumpRecord | undefined, parent?: PageDumpRecord) => {
+    if (!record) return;
+    record.stableRef = record.stableRef ?? stableRefFor(record, parent);
+    for (const control of record.controls ?? []) {
+      if (!control.framePath && record.framePath) control.framePath = record.framePath;
+      visit(control, record);
+    }
+  };
+  for (const collection of [
+    pageDump.nodes,
+    pageDump.links,
+    pageDump.controls,
+    pageDump.forms,
+    pageDump.dialogs,
+    pageDump.frames
+  ]) {
+    for (const record of collection ?? []) visit(record);
+  }
+  return pageDump;
+}
+
+function stableRefFor(record: PageDumpRecord, parent?: PageDumpRecord): string {
+  const attrs = record.attrs ?? {};
+  const attrParts = [
+    attrs.id,
+    attrs.name ?? record.name,
+    attrs.type ?? record.type,
+    attrs.href ?? record.href,
+    attrs.src ?? record.src,
+    attrs["aria-label"],
+    attrs["data-testid"],
+    attrs["data-test-id"],
+    attrs["data-cy"],
+    record.placeholder
+  ];
+  const framePath = (record.framePath ?? parent?.framePath ?? ["top"])
+    .map((part) => part.replace(/^n\d{6}/i, "n"))
+    .join(">");
+  const input = [
+    framePath,
+    parent?.selector ?? "",
+    record.selector ?? "",
+    record.tag ?? "",
+    record.role ?? "",
+    record.accessibleName ?? "",
+    record.text ?? "",
+    ...attrParts.map((value) => String(value ?? ""))
+  ].join("|");
+  return `r_${crypto.createHash("sha1").update(input).digest("hex").slice(0, 12)}`;
+}
+
+function buildActionableControls(pageDump: PageDump): PageDumpRecord[] {
+  const actionables: PageDumpRecord[] = [];
+  const add = (record: PageDumpRecord, source: string, form?: PageDumpRecord) => {
+    if (!record.selector) return;
+    const tag = record.tag?.toLowerCase() ?? "";
+    const type = String(record.attrs?.type ?? record.type ?? "").toLowerCase();
+    const reasons: string[] = [];
+    let recommendedAction: PageDumpRecord["recommendedAction"] = "inspect";
+    let confidence = 10;
+
+    if (record.visible) {
+      confidence += 25;
+      reasons.push("visible");
+    }
+    if (isFillableRecord(record)) {
+      recommendedAction = tag === "select" ? "select" : "fill";
+      confidence += 35;
+      reasons.push("fillable");
+    } else if (tag === "input" && ["checkbox", "radio"].includes(type)) {
+      recommendedAction = "toggle";
+      confidence += 28;
+      reasons.push(type);
+    } else if (tag === "button" || tag === "a" || /\bbutton|link|checkbox|radio\b/i.test(String(record.role ?? ""))) {
+      recommendedAction = tag === "input" && ["checkbox", "radio"].includes(type) ? "toggle" : "click";
+      confidence += 28;
+      reasons.push(tag === "a" ? "link" : "clickable");
+    }
+
+    const label = `${record.accessibleName ?? ""} ${record.text ?? ""} ${record.placeholder ?? ""}`;
+    if (label.trim()) {
+      confidence += Math.min(18, cleanText(label).length);
+      reasons.push("labeled");
+    }
+    if (/\b(search|submit|continue|next|login|sign in|save|send|post|apply|allow|accept|close)\b/i.test(label)) {
+      confidence += 16;
+      reasons.push("action text");
+    }
+    if (!record.selector) confidence -= 30;
+    if (!record.visible && !isFillableRecord(record)) confidence -= 25;
+    if (tag === "input" && type === "hidden") return;
+
+    if (recommendedAction === "inspect" && confidence < 35) return;
+    actionables.push({
+      ...record,
+      stableRef: record.stableRef ?? stableRefFor(record, form),
+      framePath: record.framePath ?? form?.framePath,
+      recommendedAction,
+      confidence,
+      reasons,
+      source,
+      formRef: form?.ref
+    });
+  };
+
+  for (const record of pageDump.controls ?? []) add(record, "controls");
+  for (const form of pageDump.forms ?? []) {
+    for (const control of form.controls ?? []) add(control, "forms", form);
+  }
+
+  const byKey = new Map<string, PageDumpRecord>();
+  for (const record of actionables) {
+    const key = `${record.selector}|${record.recommendedAction}`;
+    const previous = byKey.get(key);
+    if (!previous || (record.confidence ?? 0) > (previous.confidence ?? 0)) {
+      byKey.set(key, record);
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0) || String(a.stableRef ?? a.ref).localeCompare(String(b.stableRef ?? b.ref)))
+    .slice(0, 250);
+}
+
+function isFillableRecord(record: PageDumpRecord): boolean {
+  const tag = record.tag?.toLowerCase();
+  const type = String(record.attrs?.type ?? record.type ?? "").toLowerCase();
+  return tag === "textarea" || tag === "select" || tag === "input" && !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(type);
+}
+
+function cleanText(text: unknown): string {
+  return String(text ?? "").replace(/\s+/g, " ").trim();
 }
 
 function attrsLine(attrs: Record<string, unknown>): string {
@@ -714,11 +867,13 @@ export async function writeSnapshot(
   if (stateResult.exception) throw new Error(stateResult.exception);
   if (dumpResult.exception) throw new Error(dumpResult.exception);
   const pageState = stateResult.value as { url?: string; title?: string };
-  const pageDump = dumpResult.value as PageDump;
+  const pageDump = attachStableRefs(dumpResult.value as PageDump);
   const controls = pageDump.controls ?? [];
   const visibleControls = controls.filter((record) => {
     return Boolean((record as { visible?: unknown })?.visible);
   });
+  const actionableControls = buildActionableControls(pageDump);
+  pageDump.actionableControls = actionableControls;
   const helpers = helperSummaries(pageState.url ?? options.target.url);
   const meta = {
     id: snapshotId,
@@ -744,6 +899,7 @@ export async function writeSnapshot(
     links: path.join(dir, "links.ndjson"),
     controls: path.join(dir, "controls.ndjson"),
     visibleControls: path.join(dir, "visible-controls.ndjson"),
+    actionableControls: path.join(dir, "actionable-controls.ndjson"),
     forms: path.join(dir, "forms.ndjson"),
     dialogs: path.join(dir, "dialogs.ndjson"),
     frames: path.join(dir, "frames.ndjson"),
@@ -761,6 +917,7 @@ export async function writeSnapshot(
   await writeNdjson(artifacts.links, pageDump.links ?? []);
   await writeNdjson(artifacts.controls, controls);
   await writeNdjson(artifacts.visibleControls, visibleControls);
+  await writeNdjson(artifacts.actionableControls, actionableControls);
   await writeNdjson(artifacts.forms, pageDump.forms ?? []);
   await writeNdjson(artifacts.dialogs, pageDump.dialogs ?? []);
   await writeNdjson(artifacts.frames, pageDump.frames ?? []);
@@ -859,6 +1016,7 @@ async function writeDiffs(currentDir: string, nextDir: string, diffDir: string):
     ["links", "links.ndjson"],
     ["controls", "controls.ndjson"],
     ["visibleControls", "visible-controls.ndjson"],
+    ["actionableControls", "actionable-controls.ndjson"],
     ["forms", "forms.ndjson"],
     ["dialogs", "dialogs.ndjson"],
     ["frames", "frames.ndjson"],

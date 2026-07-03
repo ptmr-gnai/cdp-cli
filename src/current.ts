@@ -54,6 +54,7 @@ export interface CurrentDiffFileSummary extends CurrentFileSummary {
 
 export interface CurrentRef {
   ref: string;
+  stableRef?: string;
   selector?: string;
   tag?: string;
   text?: string;
@@ -68,6 +69,7 @@ export interface CurrentRefCandidate extends CurrentRef {
 
 interface CurrentRefRecord {
   ref?: string;
+  stableRef?: string;
   selector?: string;
   tag?: string;
   text?: string;
@@ -75,6 +77,9 @@ interface CurrentRefRecord {
   visible?: boolean;
   attrs?: Record<string, unknown>;
   rect?: CurrentRect | null;
+  recommendedAction?: "click" | "fill" | "select" | "toggle" | "inspect";
+  confidence?: number;
+  reasons?: string[];
 }
 
 interface CurrentRect {
@@ -86,6 +91,7 @@ interface CurrentRect {
 
 const IMPORTANT_FILES = [
   "dump.txt",
+  "actionable-controls.ndjson",
   "visible-controls.ndjson",
   "controls.ndjson",
   "links.ndjson",
@@ -105,6 +111,7 @@ const IMPORTANT_FILES = [
 
 const COUNT_FILES: Record<string, string> = {
   nodes: "nodes.ndjson",
+  actionableControls: "actionable-controls.ndjson",
   visibleControls: "visible-controls.ndjson",
   controls: "controls.ndjson",
   links: "links.ndjson",
@@ -145,6 +152,7 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
   const diffs = await summarizeLatestDiffs(currentDir);
   const grepFiles = [
     artifacts["dump.txt"],
+    artifacts["actionable-controls.ndjson"],
     artifacts["visible-controls.ndjson"],
     artifacts["forms.ndjson"],
     artifacts["dialogs.ndjson"]
@@ -164,6 +172,7 @@ export async function readCurrentSnapshotSummary(outDir: string, target: TargetI
     suggestedSearches: [
       `rg 'Search|Login|Submit|Continue|Next|button|input|dialog' ${shellBrace(grepFiles)}`,
       `rg '"ref":"n[0-9]+".*"visible":true|"tag":"(button|input|textarea|select|a)"' ${shellBrace([
+        artifacts["actionable-controls.ndjson"],
         artifacts["visible-controls.ndjson"],
         artifacts["controls.ndjson"]
       ])}`,
@@ -213,15 +222,23 @@ async function countIndexes(currentDir: string): Promise<Record<string, number>>
 async function summarizeRefs(currentDir: string): Promise<CurrentRefSummary> {
   const records: CurrentRefRecord[] = [];
   const summary: CurrentRefSummary = { candidates: [] };
-  for await (const record of readNdjson<CurrentRefRecord>(path.join(currentDir, "visible-controls.ndjson"))) {
-    if (!record.ref) continue;
+  for await (const record of readNdjson<CurrentRefRecord>(path.join(currentDir, "actionable-controls.ndjson"))) {
+    if (!record.ref && !record.stableRef) continue;
     records.push(record);
     if (!summary.firstVisibleControl) summary.firstVisibleControl = currentRef(record);
     if (!summary.firstFillable && isFillable(record)) summary.firstFillable = currentRef(record);
   }
+  if (records.length === 0) {
+    for await (const record of readNdjson<CurrentRefRecord>(path.join(currentDir, "visible-controls.ndjson"))) {
+      if (!record.ref && !record.stableRef) continue;
+      records.push(record);
+      if (!summary.firstVisibleControl) summary.firstVisibleControl = currentRef(record);
+      if (!summary.firstFillable && isFillable(record)) summary.firstFillable = currentRef(record);
+    }
+  }
   summary.candidates = records
     .map(candidateRef)
-    .sort((a, b) => b.score - a.score || a.ref.localeCompare(b.ref))
+    .sort((a, b) => b.score - a.score || commandRef(a).localeCompare(commandRef(b)))
     .slice(0, 8);
   summary.firstVisibleControl = summary.candidates.find((candidate) => !isFillable(candidate)) ?? summary.firstVisibleControl;
   summary.firstFillable = summary.candidates.find(isFillable) ?? summary.firstFillable;
@@ -241,7 +258,7 @@ async function summarizeLatestDiffs(currentDir: string): Promise<CurrentDiffSumm
   if (!diffDir || !(await fs.pathExists(diffDir))) return null;
 
   const entries = (await fs.readdir(diffDir))
-    .filter((entry) => entry.endsWith(".patch"))
+    .filter((entry) => entry.endsWith(".diff") || entry.endsWith(".patch"))
     .sort();
   const files = await Promise.all(entries.map((entry) => summarizeDiffFile(diffDir, entry)));
   const present = files.filter((file) => file.exists);
@@ -285,8 +302,8 @@ async function summarizeDiffFile(diffDir: string, file: string): Promise<Current
 function nextCommands(target: TargetInfo, refs: CurrentRefSummary): string[] {
   const suffix = ` --target ${JSON.stringify(target.id)}`;
   const commands = [`cdp-cli snapshot${suffix}`];
-  if (refs.firstVisibleControl?.ref) commands.push(`cdp-cli click ${refs.firstVisibleControl.ref}${suffix}`);
-  if (refs.firstFillable?.ref) commands.push(`cdp-cli fill ${refs.firstFillable.ref} 'text'${suffix}`);
+  if (refs.firstVisibleControl) commands.push(`cdp-cli click ${commandRef(refs.firstVisibleControl)}${suffix}`);
+  if (refs.firstFillable) commands.push(`cdp-cli fill ${commandRef(refs.firstFillable)} 'text'${suffix}`);
   if (refs.firstDialog?.ref) commands.push(`cdp-cli press Escape${suffix}`);
   commands.push(`cdp-cli helpers list${suffix}`);
   return commands;
@@ -295,6 +312,7 @@ function nextCommands(target: TargetInfo, refs: CurrentRefSummary): string[] {
 function currentRef(record: CurrentRefRecord): CurrentRef {
   return {
     ref: record.ref ?? "",
+    stableRef: record.stableRef,
     selector: record.selector,
     tag: record.tag,
     text: bestLabel(record),
@@ -308,52 +326,60 @@ function candidateRef(record: CurrentRefRecord): CurrentRefCandidate {
   const text = bestLabel(record);
   const tag = record.tag?.toLowerCase() ?? "";
   const href = String(record.attrs?.href ?? "");
-  let score = 0;
+  let score = record.confidence ?? 0;
+
+  if (record.recommendedAction && record.recommendedAction !== "inspect") {
+    score += 18;
+    addReason(reasons, record.recommendedAction);
+  }
+  for (const reason of record.reasons ?? []) {
+    addReason(reasons, reason);
+  }
 
   if (record.visible) {
     score += 10;
-    reasons.push("visible");
+    addReason(reasons, "visible");
   }
   if (text) {
     score += Math.min(20, text.length);
-    reasons.push("has text");
+    addReason(reasons, "has text");
   }
   if (["button", "input", "textarea", "select"].includes(tag)) {
     score += 18;
-    reasons.push(`${tag} control`);
+    addReason(reasons, `${tag} control`);
   }
   if (tag === "a") {
     score += 6;
-    reasons.push("link");
+    addReason(reasons, "link");
   }
   if (isFillable(record)) {
     score += 20;
-    reasons.push("fillable");
+    addReason(reasons, "fillable");
   }
   if (/\b(search|submit|continue|next|login|sign in|save|send|post|apply)\b/i.test(text)) {
     score += 16;
-    reasons.push("action text");
+    addReason(reasons, "action text");
   }
   if (/\b(search|q|query|email|username|password)\b/i.test(String(record.attrs?.name ?? "") + " " + String(record.attrs?.placeholder ?? "") + " " + String(record.accessibleName ?? ""))) {
     score += 12;
-    reasons.push("input hint");
+    addReason(reasons, "input hint");
   }
   if (!text && tag === "a") {
     score -= 10;
-    reasons.push("empty link text");
+    addReason(reasons, "empty link text");
   }
   if (tag === "a" && /^(#|javascript:|void\(0\)|)$/.test(href)) {
     score -= 6;
-    reasons.push("weak href");
+    addReason(reasons, "weak href");
   }
   if (/\b(upvote|hide|logo|avatar|icon|rss)\b/i.test(text + " " + href)) {
     score -= 12;
-    reasons.push("low-value chrome");
+    addReason(reasons, "low-value chrome");
   }
   if (record.rect && record.rect.y > 800) {
     const penalty = Math.min(20, Math.floor((record.rect.y - 800) / 50) + 1);
     score -= penalty;
-    reasons.push("below fold");
+    addReason(reasons, "below fold");
   }
 
   return {
@@ -366,7 +392,15 @@ function candidateRef(record: CurrentRefRecord): CurrentRefCandidate {
 function isFillable(record: CurrentRefRecord): boolean {
   const tag = record.tag?.toLowerCase();
   const type = String(record.attrs?.type ?? "").toLowerCase();
-  return tag === "textarea" || tag === "select" || tag === "input" && !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(type);
+  return record.recommendedAction === "fill" || record.recommendedAction === "select" || tag === "textarea" || tag === "select" || tag === "input" && !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(type);
+}
+
+function commandRef(record: CurrentRef): string {
+  return record.stableRef ?? record.ref;
+}
+
+function addReason(reasons: string[], reason: string): void {
+  if (!reasons.includes(reason)) reasons.push(reason);
 }
 
 function cleanText(text: unknown): string {

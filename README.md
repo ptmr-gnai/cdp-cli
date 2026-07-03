@@ -137,6 +137,7 @@ Artifacts are written under `.cdp-cli/` by default:
         nodes.ndjson
         links.ndjson
         controls.ndjson
+        actionable-controls.ndjson
         visible-controls.ndjson
         forms.ndjson
         dialogs.ndjson
@@ -164,10 +165,11 @@ Artifacts are written under `.cdp-cli/` by default:
 The important files for agents are usually:
 
 - `state.json`: URL, title, viewport, headings, controls, dialogs, active element, and metadata.
-- `dump.txt`: grep-first page projection with page metadata, counts, helper commands, visible controls, forms, dialogs, frames, resources, scripts, accessibility records, suggested `rg` commands, and then the raw tree. Control lines include refs, selectors, visibility, rects, text, and `path="top > ..."` markers for same-origin frames and open shadow roots.
+- `dump.txt`: grep-first page projection with page metadata, counts, helper commands, actionable controls, visible controls, forms, dialogs, frames, resources, scripts, accessibility records, suggested `rg` commands, and then the raw tree. Control lines include refs, stable refs, selectors, visibility, rects, text, and `path="top > ..."` markers for same-origin frames and open shadow roots.
 - `text.md`: readable page text.
 - `nodes.ndjson`: one structured record for every element in `dump.txt`; action refs use this to traverse shadow roots and same-origin frames.
-- `visible-controls.ndjson`: visible links/buttons/inputs/selectors to try first.
+- `actionable-controls.ndjson`: ranked controls to try first, including visible controls and form controls that may be better represented by the DOM/form index than by viewport visibility. Records include `recommendedAction`, `confidence`, `reasons`, and `stableRef`.
+- `visible-controls.ndjson`: visible links/buttons/inputs/selectors to inspect directly.
 - `controls.ndjson`, `links.ndjson`, `forms.ndjson`, `dialogs.ndjson`, `frames.ndjson`: fuller structured indexes for fallback inspection.
 - `resources.ndjson`: browser resource timing records for scripts, styles, images, fetches, iframes, and other loaded resources.
 - `scripts.ndjson`: script tags with external URLs and inline script length/hash/snippet metadata.
@@ -189,15 +191,15 @@ cdp-cli current --target example.com
 cdp-cli orient --target example.com
 ```
 
-`current.data.current.refs.candidates` lists a small ranked set of refs from `visible-controls.ndjson` with scores and reasons such as `fillable`, `action text`, `input hint`, or `below fold`. The underlying files remain the source of truth; the ranking is just a quick starting point for the next grep/click/fill step.
+`current.data.current.refs.candidates` lists a small ranked set of refs from `actionable-controls.ndjson`, falling back to `visible-controls.ndjson` for older snapshots. Scores and reasons include signals such as `fill`, `click`, `fillable`, `action text`, `input hint`, or `below fold`. The underlying files remain the source of truth; the ranking is just a quick starting point for the next grep/click/fill step.
 
 `current.data.current.diffs` points at the latest snapshot diff directory when one exists, with patch file counts, additions/removals, hunk totals, and a suggested `rg` for newly appeared dialogs, controls, ARIA markers, and modal/cookie/consent text. This is the first place to look when a click or fill unexpectedly changes the page.
 
-Refs such as `n000017` are reusable by action commands until the next snapshot changes them:
+Refs such as `n000017` are reusable by action commands until the next snapshot changes them. Stable refs such as `r_abcdef123456` are derived from selector, label, attributes, and frame context; they are preferred in `current` suggestions because they are less sensitive to traversal-order churn:
 
 ```sh
-rg 'Search|Login|Submit|selector=' .cdp-cli/targets/*/current/{dump.txt,visible-controls.ndjson,forms.ndjson}
-cdp-cli click n000017
+rg 'Search|Login|Submit|selector=' .cdp-cli/targets/*/current/{dump.txt,actionable-controls.ndjson,visible-controls.ndjson,forms.ndjson}
+cdp-cli click r_abcdef123456
 cdp-cli wait 1000
 cdp-cli fill n000042 'agent query'
 ```

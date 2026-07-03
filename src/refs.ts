@@ -5,6 +5,7 @@ import type { TargetInfo } from "./types.js";
 
 interface RefRecord {
   ref?: string;
+  stableRef?: string;
   framePath?: string[];
   selector?: string;
   text?: string;
@@ -23,13 +24,15 @@ export interface ResolvedRef {
   input: string;
   selector: string;
   ref?: string;
+  stableRef?: string;
   framePath?: string[];
   roots?: RefRootStep[];
   source?: string;
   record?: RefRecord;
 }
 
-const REF_PATTERN = /^(?:ref:)?(n\d{6})$/i;
+const LOCAL_REF_PATTERN = /^(?:ref:)?(n\d{6})$/i;
+const STABLE_REF_PATTERN = /^(?:stable:)?(r_[a-f0-9]{8,40})$/i;
 
 export async function resolveSelectorRef(
   outDir: string,
@@ -56,7 +59,7 @@ export async function resolveSelectorRef(
 }
 
 function normalizeRef(input: string): string | undefined {
-  return input.match(REF_PATTERN)?.[1].toLowerCase();
+  return (input.match(LOCAL_REF_PATTERN)?.[1] ?? input.match(STABLE_REF_PATTERN)?.[1])?.toLowerCase();
 }
 
 export async function findCurrentSnapshotDir(outDir: string, target: TargetInfo): Promise<string | undefined> {
@@ -82,6 +85,7 @@ export async function findCurrentSnapshotDir(outDir: string, target: TargetInfo)
 
 async function findIndexedRef(currentDir: string, ref: string): Promise<ResolvedRef | undefined> {
   for (const file of [
+    "actionable-controls.ndjson",
     "visible-controls.ndjson",
     "controls.ndjson",
     "links.ndjson",
@@ -92,10 +96,11 @@ async function findIndexedRef(currentDir: string, ref: string): Promise<Resolved
   ]) {
     const fullPath = path.join(currentDir, file);
     for await (const record of readNdjson<RefRecord>(fullPath)) {
-      if (record.ref?.toLowerCase() === ref && record.selector) {
+      if ((record.ref?.toLowerCase() === ref || record.stableRef?.toLowerCase() === ref) && record.selector) {
         return {
           input: ref,
-          ref,
+          ref: record.ref ?? (ref.startsWith("n") ? ref : undefined),
+          stableRef: record.stableRef ?? (ref.startsWith("r_") ? ref : undefined),
           selector: record.selector,
           framePath: record.framePath,
           source: fullPath,
@@ -140,7 +145,7 @@ async function withRootSteps(currentDir: string, resolved: ResolvedRef): Promise
 
 async function readRefMap(currentDir: string): Promise<Map<string, RefRecord>> {
   const refs = new Map<string, RefRecord>();
-  for (const file of ["nodes.ndjson", "frames.ndjson", "controls.ndjson", "links.ndjson", "dialogs.ndjson", "forms.ndjson"]) {
+  for (const file of ["nodes.ndjson", "frames.ndjson", "controls.ndjson", "actionable-controls.ndjson", "links.ndjson", "dialogs.ndjson", "forms.ndjson"]) {
     const fullPath = path.join(currentDir, file);
     for await (const record of readNdjson<RefRecord>(fullPath)) {
       if (record.ref && record.selector && !refs.has(record.ref.toLowerCase())) {

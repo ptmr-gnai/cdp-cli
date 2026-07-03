@@ -54,7 +54,7 @@ export function targetActions(target?: TargetInfo): JsonEnvelope["actions"] {
     {
       rel: "click-ref",
       command: `cdp-cli click <ref>${suffix}`,
-      description: "Click a ref from current.visible-controls.ndjson, controls.ndjson, or dump.txt."
+      description: "Click a ref from current actionable-controls.ndjson, visible-controls.ndjson, controls.ndjson, or dump.txt."
     },
     {
       rel: "fill-ref",
