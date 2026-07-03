@@ -341,17 +341,22 @@ function qualityCoverage(
   const title = String(state?.title ?? meta?.title ?? "");
   const activeText = String(state?.activeElement?.text ?? "");
   const challengeHaystack = `${url}\n${title}\n${activeText}\n${challengeText}`;
-  const loadingShellLikely =
+  const grepReady = counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0;
+  const actionReady = counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0;
+  const loadingShellSeen =
     /(?:role="progressbar"|aria-busy="true"|busy="1"|Loading[.\u2026]*|loading-spinner|initial-loading-spinner|skeleton)/i.test(challengeHaystack) &&
     !/loading="lazy"/i.test(challengeHaystack);
+  const challengeSeen = /(?:captcha required|enter captcha|solve captcha|js_challenge|challenge\.js|challenge-platform|cdn-cgi\/challenge-platform|__CF\$cv|cf_chl|awswaf|aws-waf|not a robot|verify that you'?re not a robot|verification flow|blocked by)/i.test(challengeHaystack);
+  const loadingShellLikely = loadingShellSeen && (!grepReady || !actionReady);
+  const challengeLikely = challengeSeen && (!grepReady || !actionReady);
   return {
     filesReady: Object.values(requiredFiles).every(Boolean),
     dumpNavigable: Object.values(dumpSections).every(Boolean),
     pageReady: readyState === "complete" || readyState === "interactive",
-    challengeLikely: /(?:captcha required|enter captcha|solve captcha|js_challenge|challenge\.js|challenge-platform|cdn-cgi\/challenge-platform|__CF\$cv|cf_chl|awswaf|aws-waf|not a robot|verify that you'?re not a robot|verification flow|blocked by)/i.test(challengeHaystack),
+    challengeLikely,
     loadingShellLikely,
-    grepReady: counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0,
-    actionReady: counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0,
+    grepReady,
+    actionReady,
     accessibilityReady: counts.accessibilityLines > 1,
     networkReady: counts.resources > 0 || counts.scripts > 0,
     frameCoverage: counts.frames > 0,

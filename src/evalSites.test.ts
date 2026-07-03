@@ -214,7 +214,7 @@ describe("evaluateSnapshotQuality", () => {
     expect(quality.warnings).toContain("page looks like a bot challenge, captcha, or verification flow");
   });
 
-  it("keeps challenge markers as a signal without failing a rich usable projection", async () => {
+  it("does not treat challenge markers as blocking when the projection is usable", async () => {
     const dir = await makeSnapshotDir();
     await writeRequiredArtifacts(dir);
     await fs.writeJson(path.join(dir, "meta.json"), {
@@ -277,7 +277,7 @@ describe("evaluateSnapshotQuality", () => {
 
     expect(quality.ok).toBe(true);
     expect(quality.coverage).toMatchObject({
-      challengeLikely: true,
+      challengeLikely: false,
       grepReady: true,
       actionReady: true
     });
@@ -358,6 +358,77 @@ describe("evaluateSnapshotQuality", () => {
       actionReady: false
     });
     expect(quality.warnings).toContain("page looks stuck on a loading or skeleton shell");
+  });
+
+  it("does not treat skeleton markup as blocking when the projection is usable", async () => {
+    const dir = await makeSnapshotDir();
+    await writeRequiredArtifacts(dir);
+    await fs.writeJson(path.join(dir, "meta.json"), {
+      url: "https://app.example.com/login",
+      title: "Example App"
+    });
+    await fs.writeJson(path.join(dir, "state.json"), {
+      url: "https://app.example.com/login",
+      title: "Example App",
+      readyState: "complete"
+    });
+    await fs.writeFile(path.join(dir, "dump.txt"), [
+      "# cdp-cli dump v1",
+      "PAGE title=\"Example App\" url=\"https://app.example.com/login\" target=\"T\" snapshot=\"S\"",
+      "COUNTS nodes=4 controls=1 visibleControls=1 links=1 forms=1 dialogs=0 frames=0 resources=1 scripts=1 openShadowRoots=0",
+      "HELPERS generic.links generic.forms",
+      "",
+      "# suggested-grep",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
+      "",
+      "# visible-controls",
+      "CONTROL [n000002] path=\"top\" <button> selector=\"#continue\" visible=true text=\"Continue\"",
+      "",
+      "# forms",
+      "FORM [n000003] selector=\"#login\"",
+      "",
+      "# dialogs",
+      "DIALOG none",
+      "",
+      "# frames",
+      "FRAME none",
+      "",
+      "# resources",
+      "RESOURCE type=\"script\" url=\"https://app.example.com/app.js\"",
+      "",
+      "# scripts",
+      "SCRIPT inline=false src=\"https://app.example.com/app.js\"",
+      "",
+      "# accessibility",
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\" name=\"Example App\"",
+      "",
+      "# tree",
+      "[n000001] <html> selector=\"html\" visible=true",
+      "  [n000002] <button> selector=\"#continue\" visible=true text=\"Continue\"",
+      "  [n000004] <div class=\"skeleton\"> selector=\"#template\" visible=false rect={\"x\":0,\"y\":0,\"width\":0,\"height\":0}"
+    ].join("\n") + "\n");
+    await fs.writeFile(path.join(dir, "text.md"), "Example App\nContinue\n");
+    await fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\nA11Y [1] role=\"RootWebArea\" name=\"Example App\"\n");
+    await writeNdjson(path.join(dir, "nodes.ndjson"), [{ ref: "n000001" }, { ref: "n000002" }, { ref: "n000003" }, { ref: "n000004" }]);
+    await writeNdjson(path.join(dir, "links.ndjson"), [{ ref: "n000002" }]);
+    await writeNdjson(path.join(dir, "controls.ndjson"), [{ ref: "n000002" }]);
+    await writeNdjson(path.join(dir, "visible-controls.ndjson"), [{ ref: "n000002", visible: true }]);
+    await writeNdjson(path.join(dir, "forms.ndjson"), [{ ref: "n000003" }]);
+    await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
+    await writeNdjson(path.join(dir, "frames.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), [{ name: "https://app.example.com/app.js" }]);
+    await writeNdjson(path.join(dir, "scripts.ndjson"), [{ src: "https://app.example.com/app.js" }]);
+
+    const quality = await evaluateSnapshotQuality(dir);
+
+    expect(quality.ok).toBe(true);
+    expect(quality.coverage).toMatchObject({
+      loadingShellLikely: false,
+      grepReady: true,
+      actionReady: true
+    });
+    expect(quality.warnings).not.toContain("page looks stuck on a loading or skeleton shell");
   });
 
   it("summarizes eval site results into an agent-readable matrix", () => {
