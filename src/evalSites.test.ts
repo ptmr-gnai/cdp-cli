@@ -206,7 +206,77 @@ describe("evaluateSnapshotQuality", () => {
       actionReady: false
     });
     expect(quality.warnings).toContain('page readyState is "loading"');
-    expect(quality.warnings).toContain("page URL/title looks like a bot challenge, captcha, or verification flow");
+    expect(quality.warnings).toContain("page looks like a bot challenge, captcha, or verification flow");
+  });
+
+  it("keeps challenge markers as a signal without failing a rich usable projection", async () => {
+    const dir = await makeSnapshotDir();
+    await writeRequiredArtifacts(dir);
+    await fs.writeJson(path.join(dir, "meta.json"), {
+      url: "https://www.example.com/?js_challenge=1&token=abc",
+      title: "Example"
+    });
+    await fs.writeJson(path.join(dir, "state.json"), {
+      url: "https://www.example.com/?js_challenge=1&token=abc",
+      title: "Example",
+      readyState: "complete"
+    });
+    await fs.writeFile(path.join(dir, "dump.txt"), [
+      "# cdp-cli dump v1",
+      "PAGE title=\"Example\" url=\"https://www.example.com/?js_challenge=1&token=abc\" target=\"T\" snapshot=\"S\"",
+      "COUNTS nodes=2 controls=1 visibleControls=1 links=1 forms=0 dialogs=0 frames=0 resources=1 scripts=1 openShadowRoots=0",
+      "HELPERS generic.links generic.forms",
+      "",
+      "# suggested-grep",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
+      "",
+      "# visible-controls",
+      "CONTROL [n000002] path=\"top\" <a> selector=\"#login\" visible=true text=\"Log In\" attrs={href=\"/login\"}",
+      "",
+      "# forms",
+      "FORM none",
+      "",
+      "# dialogs",
+      "DIALOG none",
+      "",
+      "# frames",
+      "FRAME none",
+      "",
+      "# resources",
+      "RESOURCE type=\"script\" url=\"https://www.example.com/app.js\"",
+      "",
+      "# scripts",
+      "SCRIPT inline=false src=\"https://www.example.com/app.js\"",
+      "",
+      "# accessibility",
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\" name=\"Example\"",
+      "",
+      "# tree",
+      "[n000001] <html> selector=\"html\" visible=true",
+      "  [n000002] <a> selector=\"#login\" visible=true text=\"Log In\""
+    ].join("\n") + "\n");
+    await fs.writeFile(path.join(dir, "text.md"), "Example\nLog In\n");
+    await fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\nA11Y [1] role=\"RootWebArea\" name=\"Example\"\n");
+    await writeNdjson(path.join(dir, "nodes.ndjson"), [{ ref: "n000001" }, { ref: "n000002" }]);
+    await writeNdjson(path.join(dir, "links.ndjson"), [{ ref: "n000002" }]);
+    await writeNdjson(path.join(dir, "controls.ndjson"), [{ ref: "n000002" }]);
+    await writeNdjson(path.join(dir, "visible-controls.ndjson"), [{ ref: "n000002", visible: true }]);
+    await writeNdjson(path.join(dir, "forms.ndjson"), []);
+    await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
+    await writeNdjson(path.join(dir, "frames.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), [{ name: "https://www.example.com/app.js" }]);
+    await writeNdjson(path.join(dir, "scripts.ndjson"), [{ src: "https://www.example.com/app.js" }]);
+
+    const quality = await evaluateSnapshotQuality(dir);
+
+    expect(quality.ok).toBe(true);
+    expect(quality.coverage).toMatchObject({
+      challengeLikely: true,
+      grepReady: true,
+      actionReady: true
+    });
+    expect(quality.warnings).not.toContain("page looks like a bot challenge, captcha, or verification flow");
   });
 
   it("summarizes eval site results into an agent-readable matrix", () => {

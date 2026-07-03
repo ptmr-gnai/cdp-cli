@@ -233,6 +233,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
   const dumpSections = await dumpSectionPresence(path.join(snapshotDir, "dump.txt"));
   const state = await readJsonFile<EvalSnapshotState>(path.join(snapshotDir, "state.json"));
   const meta = await readJsonFile<EvalSnapshotState>(path.join(snapshotDir, "meta.json"));
+  const challengeText = await readChallengeText(snapshotDir);
   const counts = {
     dumpLines: await countLines(path.join(snapshotDir, "dump.txt")),
     accessibilityLines: await countLines(path.join(snapshotDir, "accessibility.txt")),
@@ -248,7 +249,7 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     scripts: await countNdjson(path.join(snapshotDir, "scripts.ndjson")),
     openShadowRoots: await countPattern(path.join(snapshotDir, "dump.txt"), "#shadow-root(open)")
   };
-  const coverage = qualityCoverage(requiredFiles, dumpSections, counts, state, meta);
+  const coverage = qualityCoverage(requiredFiles, dumpSections, counts, state, meta, challengeText);
   const warnings = qualityWarnings(requiredFiles, dumpSections, counts, coverage, state);
   return {
     ok: warnings.length === 0,
@@ -328,16 +329,18 @@ function qualityCoverage(
   dumpSections: Record<string, boolean>,
   counts: EvalSiteQuality["counts"],
   state: EvalSnapshotState | null,
-  meta: EvalSnapshotState | null
+  meta: EvalSnapshotState | null,
+  challengeText: string
 ): EvalSiteCoverage {
   const readyState = String(state?.readyState ?? "").toLowerCase();
   const url = String(state?.url ?? meta?.url ?? "");
   const title = String(state?.title ?? meta?.title ?? "");
+  const challengeHaystack = `${url}\n${title}\n${challengeText}`;
   return {
     filesReady: Object.values(requiredFiles).every(Boolean),
     dumpNavigable: Object.values(dumpSections).every(Boolean),
     pageReady: readyState === "complete" || readyState === "interactive",
-    challengeLikely: /(?:captcha|challenge|js_challenge|cf_chl|token=|blocked|verify)/i.test(`${url}\n${title}`),
+    challengeLikely: /(?:captcha required|enter captcha|solve captcha|js_challenge|challenge\.js|cf_chl|awswaf|aws-waf|not a robot|verify that you'?re not a robot|verification flow|blocked by)/i.test(challengeHaystack),
     grepReady: counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0,
     actionReady: counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0,
     accessibilityReady: counts.accessibilityLines > 1,
@@ -369,7 +372,9 @@ function qualityWarnings(
   if (!coverage.accessibilityReady) warnings.push("accessibility.txt is too thin for a11y-first inspection");
   if (!coverage.networkReady) warnings.push("resources.ndjson and scripts.ndjson have no records");
   if (!coverage.pageReady) warnings.push(`page readyState is ${JSON.stringify(state?.readyState ?? null)}`);
-  if (coverage.challengeLikely) warnings.push("page URL/title looks like a bot challenge, captcha, or verification flow");
+  if (coverage.challengeLikely && (!coverage.grepReady || !coverage.actionReady)) {
+    warnings.push("page looks like a bot challenge, captcha, or verification flow");
+  }
   return warnings;
 }
 
@@ -404,4 +409,16 @@ async function readJsonFile<T>(file: string): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+async function readChallengeText(snapshotDir: string): Promise<string> {
+  const files = ["dump.txt", "text.md", "resources.ndjson", "scripts.ndjson"];
+  const chunks = await Promise.all(files.map(async (file) => {
+    try {
+      return (await fs.readFile(path.join(snapshotDir, file), "utf8")).slice(0, 50_000);
+    } catch {
+      return "";
+    }
+  }));
+  return chunks.join("\n");
 }
