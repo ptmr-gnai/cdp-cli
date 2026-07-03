@@ -8,6 +8,11 @@ describe("evaluateSnapshotQuality", () => {
   it("passes a file-first snapshot with required artifacts and indexes", async () => {
     const dir = await makeSnapshotDir();
     await writeRequiredArtifacts(dir);
+    await fs.writeJson(path.join(dir, "state.json"), {
+      url: "https://example.com",
+      title: "Example",
+      readyState: "complete"
+    });
     await fs.writeFile(path.join(dir, "dump.txt"), [
       "# cdp-cli dump v1",
       "PAGE title=\"Example\" url=\"https://example.com\" target=\"TARGET123\" snapshot=\"snap1\"",
@@ -89,6 +94,8 @@ describe("evaluateSnapshotQuality", () => {
       coverage: {
         filesReady: true,
         dumpNavigable: true,
+        pageReady: true,
+        challengeLikely: false,
         grepReady: true,
         actionReady: true,
         accessibilityReady: true,
@@ -117,9 +124,12 @@ describe("evaluateSnapshotQuality", () => {
     expect(quality.warnings).toContain("text.md has no readable text lines");
     expect(quality.warnings).toContain("accessibility.txt is too thin for a11y-first inspection");
     expect(quality.warnings).toContain("resources.ndjson and scripts.ndjson have no records");
+    expect(quality.warnings).toContain("page readyState is null");
     expect(quality.coverage).toMatchObject({
       filesReady: false,
       dumpNavigable: false,
+      pageReady: false,
+      challengeLikely: false,
       grepReady: false,
       actionReady: false,
       accessibilityReady: false,
@@ -127,6 +137,76 @@ describe("evaluateSnapshotQuality", () => {
     });
     expect(quality.suggestedSearches.join("\n")).toContain("visible-controls.ndjson");
     expect(quality.suggestedSearches.join("\n")).toContain("resources.ndjson");
+  });
+
+  it("warns when a snapshot looks like an unfinished challenge page", async () => {
+    const dir = await makeSnapshotDir();
+    await writeRequiredArtifacts(dir);
+    await fs.writeJson(path.join(dir, "meta.json"), {
+      url: "https://www.example.com/?js_challenge=1&token=abc",
+      title: ""
+    });
+    await fs.writeJson(path.join(dir, "state.json"), {
+      url: "https://www.example.com/?js_challenge=1&token=abc",
+      title: "",
+      readyState: "loading"
+    });
+    await fs.writeFile(path.join(dir, "dump.txt"), [
+      "# cdp-cli dump v1",
+      "PAGE title=\"\" url=\"https://www.example.com/?js_challenge=1&token=abc\" target=\"T\" snapshot=\"S\"",
+      "COUNTS nodes=1 controls=0 visibleControls=0 links=0 forms=0 dialogs=0 frames=0 resources=0 scripts=0 openShadowRoots=0",
+      "HELPERS generic.links generic.forms",
+      "",
+      "# suggested-grep",
+      "rg 'CONTROL|FORM|DIALOG|FRAME|RESOURCE|SCRIPT|A11Y|#shadow-root|selector=' dump.txt",
+      "",
+      "# visible-controls",
+      "CONTROL none",
+      "",
+      "# forms",
+      "FORM none",
+      "",
+      "# dialogs",
+      "DIALOG none",
+      "",
+      "# frames",
+      "FRAME none",
+      "",
+      "# resources",
+      "RESOURCE none",
+      "",
+      "# scripts",
+      "SCRIPT none",
+      "",
+      "# accessibility",
+      "# cdp-cli accessibility v1",
+      "A11Y [1] role=\"RootWebArea\"",
+      "",
+      "# tree",
+      "[n000001] <html> selector=\"html\" visible=true"
+    ].join("\n") + "\n");
+    await fs.writeFile(path.join(dir, "text.md"), "");
+    await fs.writeFile(path.join(dir, "accessibility.txt"), "# cdp-cli accessibility v1\nA11Y [1] role=\"RootWebArea\"\n");
+    await writeNdjson(path.join(dir, "nodes.ndjson"), [{ ref: "n000001" }]);
+    await writeNdjson(path.join(dir, "links.ndjson"), []);
+    await writeNdjson(path.join(dir, "controls.ndjson"), []);
+    await writeNdjson(path.join(dir, "visible-controls.ndjson"), []);
+    await writeNdjson(path.join(dir, "forms.ndjson"), []);
+    await writeNdjson(path.join(dir, "dialogs.ndjson"), []);
+    await writeNdjson(path.join(dir, "frames.ndjson"), []);
+    await writeNdjson(path.join(dir, "resources.ndjson"), []);
+    await writeNdjson(path.join(dir, "scripts.ndjson"), []);
+
+    const quality = await evaluateSnapshotQuality(dir);
+
+    expect(quality.coverage).toMatchObject({
+      pageReady: false,
+      challengeLikely: true,
+      grepReady: false,
+      actionReady: false
+    });
+    expect(quality.warnings).toContain('page readyState is "loading"');
+    expect(quality.warnings).toContain("page URL/title looks like a bot challenge, captcha, or verification flow");
   });
 
   it("summarizes eval site results into an agent-readable matrix", () => {
@@ -143,6 +223,8 @@ describe("evaluateSnapshotQuality", () => {
           coverage: {
             filesReady: true,
             dumpNavigable: true,
+            pageReady: true,
+            challengeLikely: false,
             grepReady: true,
             actionReady: true,
             accessibilityReady: true,
@@ -181,6 +263,8 @@ describe("evaluateSnapshotQuality", () => {
           coverage: {
             filesReady: false,
             dumpNavigable: false,
+            pageReady: false,
+            challengeLikely: false,
             grepReady: false,
             actionReady: false,
             accessibilityReady: false,

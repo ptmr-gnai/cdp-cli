@@ -134,9 +134,9 @@ export async function listTargets(browserUrl: string, userDataDir?: string): Pro
       } finally {
         await closeClient(browser);
       }
-    } catch {
-      await trace({ event: "targets.list.active_port_failed", error: errorData(error) });
-      throw error;
+    } catch (fallbackError) {
+      await trace({ event: "targets.list.active_port_failed", error: errorData(fallbackError) });
+      throw fallbackError;
     }
   }
 
@@ -186,9 +186,9 @@ export async function createTarget(browserUrl: string, url: string, userDataDir?
       } finally {
         await closeClient(browser);
       }
-    } catch {
-      await trace({ event: "target.create.active_port_failed", error: errorData(error) });
-      throw error;
+    } catch (fallbackError) {
+      await trace({ event: "target.create.active_port_failed", error: errorData(fallbackError) });
+      throw fallbackError;
     }
   }
 }

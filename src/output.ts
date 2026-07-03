@@ -1,19 +1,15 @@
 import type { JsonEnvelope, TargetInfo } from "./types.js";
+import { errorData } from "./trace.js";
 
 export function printEnvelope(envelope: JsonEnvelope): void {
   process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
 }
 
 export function errorEnvelope(command: string, error: unknown): JsonEnvelope {
-  const err = error instanceof Error ? error : new Error(String(error));
   return {
     ok: false,
     command,
-    error: {
-      name: err.name,
-      message: err.message,
-      stack: err.stack
-    }
+    error: errorData(error)
   };
 }
 

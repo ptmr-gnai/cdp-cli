@@ -3,6 +3,7 @@ import path from "node:path";
 import { closeClient, closeTarget, connectTarget, createTarget, waitForLoad } from "./cdp.js";
 import { readNdjson } from "./refs.js";
 import { writeSnapshot } from "./snapshot.js";
+import { errorMessage } from "./trace.js";
 import type { ArtifactMap, CliGlobalOptions } from "./types.js";
 
 export interface EvalSite {
@@ -55,6 +56,8 @@ export interface EvalSiteQuality {
 export interface EvalSiteCoverage {
   filesReady: boolean;
   dumpNavigable: boolean;
+  pageReady: boolean;
+  challengeLikely: boolean;
   grepReady: boolean;
   actionReady: boolean;
   accessibilityReady: boolean;
@@ -75,6 +78,12 @@ export interface EvalSiteSummaryRow {
   warnings: string[];
   suggestedSearches: string[];
   error?: string;
+}
+
+interface EvalSnapshotState {
+  url?: string;
+  title?: string;
+  readyState?: string;
 }
 
 export const DEFAULT_EVAL_SITES: EvalSite[] = [
@@ -130,7 +139,7 @@ export async function runReadOnlyEvalSites(
         url: site.url,
         ok: false,
         targetId: createdTargetId,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage(error)
       };
       results.push(currentResult);
     } finally {
@@ -142,7 +151,7 @@ export async function runReadOnlyEvalSites(
         } catch (error) {
           currentResult = currentResult ?? results[results.length - 1];
           currentResult.closed = false;
-          currentResult.closeError = error instanceof Error ? error.message : String(error);
+          currentResult.closeError = errorMessage(error);
         }
       }
     }
@@ -222,6 +231,8 @@ async function artifactSizes(artifacts: ArtifactMap): Promise<Record<string, num
 export async function evaluateSnapshotQuality(snapshotDir: string): Promise<EvalSiteQuality> {
   const requiredFiles = await requiredFilePresence(snapshotDir);
   const dumpSections = await dumpSectionPresence(path.join(snapshotDir, "dump.txt"));
+  const state = await readJsonFile<EvalSnapshotState>(path.join(snapshotDir, "state.json"));
+  const meta = await readJsonFile<EvalSnapshotState>(path.join(snapshotDir, "meta.json"));
   const counts = {
     dumpLines: await countLines(path.join(snapshotDir, "dump.txt")),
     accessibilityLines: await countLines(path.join(snapshotDir, "accessibility.txt")),
@@ -237,8 +248,8 @@ export async function evaluateSnapshotQuality(snapshotDir: string): Promise<Eval
     scripts: await countNdjson(path.join(snapshotDir, "scripts.ndjson")),
     openShadowRoots: await countPattern(path.join(snapshotDir, "dump.txt"), "#shadow-root(open)")
   };
-  const coverage = qualityCoverage(requiredFiles, dumpSections, counts);
-  const warnings = qualityWarnings(requiredFiles, dumpSections, counts, coverage);
+  const coverage = qualityCoverage(requiredFiles, dumpSections, counts, state, meta);
+  const warnings = qualityWarnings(requiredFiles, dumpSections, counts, coverage, state);
   return {
     ok: warnings.length === 0,
     requiredFiles,
@@ -315,11 +326,18 @@ async function dumpSectionPresence(dumpPath: string): Promise<Record<string, boo
 function qualityCoverage(
   requiredFiles: Record<string, boolean>,
   dumpSections: Record<string, boolean>,
-  counts: EvalSiteQuality["counts"]
+  counts: EvalSiteQuality["counts"],
+  state: EvalSnapshotState | null,
+  meta: EvalSnapshotState | null
 ): EvalSiteCoverage {
+  const readyState = String(state?.readyState ?? "").toLowerCase();
+  const url = String(state?.url ?? meta?.url ?? "");
+  const title = String(state?.title ?? meta?.title ?? "");
   return {
     filesReady: Object.values(requiredFiles).every(Boolean),
     dumpNavigable: Object.values(dumpSections).every(Boolean),
+    pageReady: readyState === "complete" || readyState === "interactive",
+    challengeLikely: /(?:captcha|challenge|js_challenge|cf_chl|token=|blocked|verify)/i.test(`${url}\n${title}`),
     grepReady: counts.dumpLines >= 5 && counts.nodes > 0 && counts.textLines > 0,
     actionReady: counts.visibleControls > 0 || counts.links > 0 || counts.forms > 0,
     accessibilityReady: counts.accessibilityLines > 1,
@@ -334,7 +352,8 @@ function qualityWarnings(
   requiredFiles: Record<string, boolean>,
   dumpSections: Record<string, boolean>,
   counts: EvalSiteQuality["counts"],
-  coverage: EvalSiteCoverage
+  coverage: EvalSiteCoverage,
+  state: EvalSnapshotState | null
 ): string[] {
   const warnings: string[] = [];
   for (const [file, present] of Object.entries(requiredFiles)) {
@@ -349,6 +368,8 @@ function qualityWarnings(
   if (!coverage.actionReady) warnings.push("no visible controls, links, or forms were indexed");
   if (!coverage.accessibilityReady) warnings.push("accessibility.txt is too thin for a11y-first inspection");
   if (!coverage.networkReady) warnings.push("resources.ndjson and scripts.ndjson have no records");
+  if (!coverage.pageReady) warnings.push(`page readyState is ${JSON.stringify(state?.readyState ?? null)}`);
+  if (coverage.challengeLikely) warnings.push("page URL/title looks like a bot challenge, captcha, or verification flow");
   return warnings;
 }
 
@@ -374,5 +395,13 @@ async function countPattern(file: string, pattern: string): Promise<number> {
     return text.split(pattern).length - 1;
   } catch {
     return 0;
+  }
+}
+
+async function readJsonFile<T>(file: string): Promise<T | null> {
+  try {
+    return await fs.readJson(file) as T;
+  } catch {
+    return null;
   }
 }
