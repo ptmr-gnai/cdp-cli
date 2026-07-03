@@ -118,7 +118,8 @@ const PAGE_STATE_EXPRESSION = `(() => {
   const visible = (el) => {
     const style = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
-    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    const inViewport = rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0 && inViewport;
   };
   const cssPath = (el) => {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
@@ -246,7 +247,8 @@ const PAGE_DUMP_EXPRESSION = `(() => {
     try {
       const style = window.getComputedStyle(el);
       const r = el.getBoundingClientRect();
-      return style.visibility !== 'hidden' && style.display !== 'none' && r.width > 0 && r.height > 0;
+      const inViewport = r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+      return style.visibility !== 'hidden' && style.display !== 'none' && r.width > 0 && r.height > 0 && inViewport;
     } catch {
       return false;
     }
